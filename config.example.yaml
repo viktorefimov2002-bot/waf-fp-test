@@ -1,0 +1,26 @@
+mode: differential
+
+target:
+  url: https://app.example.test
+  path: /api/search
+
+origin:
+  url: https://192.0.2.10:443
+  host: app.example.test
+  sni: app.example.test
+
+request:
+  payloads: examples/payloads.txt
+  placements: [query, form, json, header, cookie, path]
+
+detection:
+  block_statuses: [403, 406]
+  block_body_contains: ["access denied", "request rejected"]
+
+execution:
+  timeout: 10s
+  rechecks: 2
+  max_body_bytes: 1048576
+
+output:
+  file: results.jsonl
