@@ -2,54 +2,61 @@
 
 `waf-fp-test` detects WAF false positives by sending known-benign requests through a WAF and, when possible, directly to the application origin.
 
-## Current prototype
+## Recommended run mode: YAML config
 
-The current prototype supports:
+Copy the example and edit it for the tested application:
 
-- controlled placements: query, form, JSON, header, cookie, and path;
-- `X-WAF-FP-Test-ID` correlation IDs;
-- automatic rechecks of FP candidates;
-- HTTP status and block-page signature detection;
-- response fingerprints: body SHA-256, captured size, content type, server, and redirect location;
-- separate direct-origin connection address, HTTP Host, and HTTPS TLS SNI;
-- differential and WAF-only operating modes;
-- JSONL output with verdict and confidence.
+```bash
+cp config.example.yaml config.yaml
+go run ./cmd/waf-fp --config config.yaml
+```
 
-Only run tests against systems you own or are explicitly authorized to test.
+Example:
 
-## Differential mode
+```yaml
+mode: differential
 
-Use this mode when the origin can be reached directly:
+target:
+  url: https://app.example.test
+  path: /api/search
+
+origin:
+  url: https://192.0.2.10:443
+  host: app.example.test
+  sni: app.example.test
+
+request:
+  payloads: examples/payloads.txt
+  placements: [query, form, json, header, cookie, path]
+
+detection:
+  block_statuses: [403, 406]
+  block_body_contains: ["access denied", "request rejected"]
+
+execution:
+  timeout: 10s
+  rechecks: 2
+  max_body_bytes: 1048576
+
+output:
+  file: results.jsonl
+```
+
+The configuration loader intentionally supports this small, predictable YAML subset: one top-level level plus one nested section level, scalar values, and inline lists. Unknown keys are rejected instead of being silently ignored.
+
+## CLI fallback and overrides
+
+The original flag-based mode remains available. Explicitly supplied flags override values loaded from the configuration file:
 
 ```bash
 go run ./cmd/waf-fp \
-  --mode differential \
-  --target https://app.example.test \
-  --origin https://192.0.2.10 \
-  --origin-host app.example.test \
-  --origin-sni app.example.test \
-  --path /api/search \
-  --payloads examples/payloads.txt \
-  --placements query,form,json,header,cookie,path \
-  --rechecks 2 \
-  --block-statuses 403,406 \
-  --block-body-contains "access denied,request rejected" \
-  --output results.jsonl
+  --config config.yaml \
+  --mode waf-only \
+  --placements query,json \
+  --output emergency-check.jsonl
 ```
 
-The direct-origin settings are intentionally separate:
-
-- `--origin` is the actual connection address, including the origin IP and port;
-- `--origin-host` is the HTTP `Host` field used for virtual-host routing;
-- `--origin-sni` is the TLS SNI name and certificate name used for HTTPS.
-
-This is equivalent in intent to using `curl --resolve`: connect to a selected IP while retaining the application's hostname at the HTTP and TLS layers.
-
-A reproducible WAF block that is not observed on the direct route is classified as `CONFIRMED_FP`. A response difference without a positive block signal is reported separately as `RESPONSE_DIFFERENCE`; it is not automatically called an FP.
-
-## WAF-only mode
-
-Use this mode when direct origin access is unavailable:
+Running without `--config` also remains supported:
 
 ```bash
 go run ./cmd/waf-fp \
@@ -59,35 +66,44 @@ go run ./cmd/waf-fp \
   --payloads examples/payloads.txt \
   --placements query,json \
   --block-statuses 403,406 \
-  --block-body-contains "access denied,request rejected" \
   --output results.jsonl
 ```
 
-A reproducible block is classified as `BLOCKED_BENIGN_CANDIDATE`, not `CONFIRMED_FP`, because the tool cannot compare it with a direct-origin baseline. This mode is useful for production-like environments, but its evidence is weaker and should be combined with known endpoint behavior or WAF event data when available.
+Only run tests against systems you own or are explicitly authorized to test.
 
-## Response evidence
+## Operating modes
 
-Each observation stores:
+### Differential
 
-- status code and duration;
-- SHA-256 of the captured response body;
-- captured response size, limited by `--max-body-bytes`;
-- `Content-Type`, `Server`, and `Location`;
-- the configured block-page substring that matched, if any.
+The request is sent through the WAF and directly to the origin. Direct-origin connection address, HTTP Host, and HTTPS TLS SNI are configured separately:
 
-Blocking is detected when either a configured block status or a configured body signature matches. Body signatures are case-insensitive.
+```text
+TCP connection -> origin.url
+HTTP Host      -> origin.host
+TLS SNI        -> origin.sni
+```
 
-## Verdicts
+A reproducible WAF block that is not observed on the direct route is classified as `CONFIRMED_FP`.
 
-- `CONFIRMED_FP`: WAF blocked a benign request while the direct origin did not.
-- `BLOCKED_BENIGN_CANDIDATE`: WAF-only mode observed a likely block.
-- `FLAKY_FP`: the candidate was not reproduced consistently during rechecks.
-- `RESPONSE_DIFFERENCE`: WAF and origin responses differ without a clear block signal.
-- `NOT_FP` / `NOT_BLOCKED`: no FP block was observed.
-- `AMBIGUOUS`: both routes appeared blocked.
-- `WAF_ERROR` / `ORIGIN_ERROR`: the corresponding request could not be evaluated.
+### WAF-only
 
-## Why request diversity matters
+Use this when direct origin access is unavailable. A reproducible block is classified as `BLOCKED_BENIGN_CANDIDATE`, not `CONFIRMED_FP`, because there is no direct-origin baseline.
+
+## Current evidence and verdicts
+
+Each observation records HTTP status, duration, body SHA-256, captured size, content type, server header, redirect location, and a matched block-page substring. Blocking is detected by configured status codes or case-insensitive body signatures.
+
+Main verdicts:
+
+- `CONFIRMED_FP`;
+- `BLOCKED_BENIGN_CANDIDATE`;
+- `FLAKY_FP`;
+- `RESPONSE_DIFFERENCE`;
+- `NOT_FP` / `NOT_BLOCKED`;
+- `AMBIGUOUS`;
+- `WAF_ERROR` / `ORIGIN_ERROR`.
+
+## Request diversity
 
 The project uses a controlled, reproducible matrix rather than random traffic:
 
@@ -95,17 +111,11 @@ The project uses a controlled, reproducible matrix rather than random traffic:
 benign payload × placement × content type × encoding × method
 ```
 
-The same benign value can exercise different WAF parsing paths in a query parameter, JSON string, cookie, header, path, or form field. Each combination is recorded separately so the triggering context remains identifiable.
+The same benign value can exercise different WAF parsing paths in a query parameter, JSON string, cookie, header, path, or form field. Each combination is recorded separately.
 
 ## Echo-origin
 
-An echo-origin remains an optional laboratory component. It does not need to be installed on a real production origin. It can run on any dedicated host or container reachable from the WAF and be configured as the backend of a test hostname:
-
-```text
-fp-test.example.test -> WAF -> dedicated echo-origin
-```
-
-It is useful for validating request delivery and parser behavior, but it is not required for black-box differential or WAF-only testing.
+Echo-origin remains an optional laboratory component. It can run on any dedicated host or container reachable from the WAF and does not need to be installed on a real production origin.
 
 ## Next milestones
 
