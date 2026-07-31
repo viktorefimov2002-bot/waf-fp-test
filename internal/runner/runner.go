@@ -27,8 +27,12 @@ const (
 )
 
 var supportedPlacements = map[Placement]struct{}{
-	PlacementQuery: {}, PlacementForm: {}, PlacementJSON: {},
-	PlacementHeader: {}, PlacementCookie: {}, PlacementPath: {},
+	PlacementQuery:  {},
+	PlacementForm:   {},
+	PlacementJSON:   {},
+	PlacementHeader: {},
+	PlacementCookie: {},
+	PlacementPath:   {},
 }
 
 type Config struct {
@@ -56,13 +60,13 @@ type Attempt struct {
 }
 
 type Result struct {
-	TestID     string      `json:"test_id"`
-	Payload    string      `json:"payload"`
-	Placement  Placement   `json:"placement"`
-	Method     string      `json:"method"`
-	Attempts   []Attempt   `json:"attempts"`
-	Verdict    string      `json:"verdict"`
-	ExecutedAt time.Time   `json:"executed_at"`
+	TestID     string    `json:"test_id"`
+	Payload    string    `json:"payload"`
+	Placement  Placement `json:"placement"`
+	Method     string    `json:"method"`
+	Attempts   []Attempt `json:"attempts"`
+	Verdict    string    `json:"verdict"`
+	ExecutedAt time.Time `json:"executed_at"`
 }
 
 func ParsePlacements(value string) ([]Placement, error) {
@@ -117,9 +121,13 @@ func Run(ctx context.Context, cfg Config) error {
 			}
 
 			result := Result{
-				TestID: testID, Payload: payload, Placement: placement,
-				Method: methodFor(placement), Attempts: attempts,
-				Verdict: classifyResult(attempts, cfg.BlockStatuses), ExecutedAt: time.Now().UTC(),
+				TestID:     testID,
+				Payload:    payload,
+				Placement:  placement,
+				Method:     methodFor(placement),
+				Attempts:   attempts,
+				Verdict:    classifyResult(attempts, cfg.BlockStatuses),
+				ExecutedAt: time.Now().UTC(),
 			}
 			if err := encoder.Encode(result); err != nil {
 				return fmt.Errorf("write result: %w", err)
@@ -178,7 +186,7 @@ func buildRequest(ctx context.Context, baseURL, path string, placement Placement
 		}
 		body = bytes.NewReader(encoded)
 	case PlacementPath:
-		target.Path = strings.TrimRight(target.Path, "/") + "/" + url.PathEscape(payload)
+		target.Path = strings.TrimRight(target.Path, "/") + "/" + payload
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), body)
