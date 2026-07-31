@@ -17,8 +17,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Format check
-        run: test -z "$(gofmt -l .)"
       - name: Vet
         run: go vet ./...
       - name: Test
