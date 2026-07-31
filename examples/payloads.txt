@@ -1,0 +1,7 @@
+# Benign strings that may resemble attack syntax
+Select a delivery method from the list
+The trade union published its annual report
+Drag and drop the image here
+Use ../docs as the relative documentation path
+The script tag is discussed in this HTML tutorial
+Run curl only in the isolated training environment
