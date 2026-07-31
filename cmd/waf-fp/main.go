@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/viktorefimov2002-bot/waf-fp-test/internal/appconfig"
 	"github.com/viktorefimov2002-bot/waf-fp-test/internal/runner"
@@ -58,28 +57,56 @@ func main() {
 }
 
 func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, blockStatuses, blockSignatures string, set map[string]bool) error {
-	if set["mode"] { cfg.Mode = cli.Mode }
-	if set["target"] { cfg.WAFBaseURL = cli.WAFBaseURL }
-	if set["origin"] { cfg.OriginBaseURL = cli.OriginBaseURL }
-	if set["origin-host"] { cfg.OriginHost = cli.OriginHost }
-	if set["origin-sni"] { cfg.OriginSNI = cli.OriginSNI }
-	if set["path"] { cfg.Path = cli.Path }
-	if set["payloads"] { cfg.PayloadFile = cli.PayloadFile }
-	if set["output"] { cfg.OutputFile = cli.OutputFile }
-	if set["timeout"] { cfg.Timeout = cli.Timeout }
-	if set["rechecks"] { cfg.Rechecks = cli.Rechecks }
-	if set["max-body-bytes"] { cfg.MaxBodyBytes = cli.MaxBodyBytes }
+	if set["mode"] {
+		cfg.Mode = cli.Mode
+	}
+	if set["target"] {
+		cfg.WAFBaseURL = cli.WAFBaseURL
+	}
+	if set["origin"] {
+		cfg.OriginBaseURL = cli.OriginBaseURL
+	}
+	if set["origin-host"] {
+		cfg.OriginHost = cli.OriginHost
+	}
+	if set["origin-sni"] {
+		cfg.OriginSNI = cli.OriginSNI
+	}
+	if set["path"] {
+		cfg.Path = cli.Path
+	}
+	if set["payloads"] {
+		cfg.PayloadFile = cli.PayloadFile
+	}
+	if set["output"] {
+		cfg.OutputFile = cli.OutputFile
+	}
+	if set["timeout"] {
+		cfg.Timeout = cli.Timeout
+	}
+	if set["rechecks"] {
+		cfg.Rechecks = cli.Rechecks
+	}
+	if set["max-body-bytes"] {
+		cfg.MaxBodyBytes = cli.MaxBodyBytes
+	}
 	if set["placements"] {
 		parsed, err := runner.ParsePlacements(placements)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		cfg.Placements = parsed
 	}
 	if set["block-statuses"] {
 		parsed, err := parseStatuses(blockStatuses)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		cfg.BlockStatuses = parsed
 	}
-	if set["block-body-contains"] { cfg.BlockSignatures = parseStrings(blockSignatures) }
+	if set["block-body-contains"] {
+		cfg.BlockSignatures = parseStrings(blockSignatures)
+	}
 	return nil
 }
 
@@ -98,7 +125,9 @@ func parseStatuses(value string) (map[int]struct{}, error) {
 func parseStrings(value string) []string {
 	var result []string
 	for _, item := range strings.Split(value, ",") {
-		if trimmed := strings.TrimSpace(item); trimmed != "" { result = append(result, trimmed) }
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			result = append(result, trimmed)
+		}
 	}
 	return result
 }
@@ -107,5 +136,3 @@ func exitConfig(err error) {
 	fmt.Fprintln(os.Stderr, "configuration error:", err)
 	os.Exit(2)
 }
-
-var _ = time.Second
