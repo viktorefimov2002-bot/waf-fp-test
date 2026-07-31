@@ -64,7 +64,7 @@ func TestBuildRequestMatrix(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(string(tc.placement), func(t *testing.T) {
-			req, err := buildRequest(context.Background(), "https://example.test", "/inspect", tc.placement, "select from catalog")
+			req, err := buildRequest(context.Background(), "https://example.test", "/inspect", tc.placement, "select from catalog", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -76,6 +76,26 @@ func TestBuildRequestMatrix(t *testing.T) {
 			}
 			tc.check(t, req)
 		})
+	}
+}
+
+func TestBuildRequestOriginHostOverride(t *testing.T) {
+	req, err := buildRequest(
+		context.Background(),
+		"http://192.0.2.10:8080",
+		"/inspect",
+		PlacementQuery,
+		"benign value",
+		"app.example.test",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.URL.Host != "192.0.2.10:8080" {
+		t.Fatalf("URL host=%q", req.URL.Host)
+	}
+	if req.Host != "app.example.test" {
+		t.Fatalf("HTTP Host=%q", req.Host)
 	}
 }
 
