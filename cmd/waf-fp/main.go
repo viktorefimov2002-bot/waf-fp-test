@@ -18,7 +18,8 @@ func main() {
 	var placements string
 
 	flag.StringVar(&cfg.WAFBaseURL, "target", "", "WAF-protected base URL")
-	flag.StringVar(&cfg.OriginBaseURL, "origin", "", "direct origin base URL")
+	flag.StringVar(&cfg.OriginBaseURL, "origin", "", "direct origin base URL or IP")
+	flag.StringVar(&cfg.OriginHost, "origin-host", "", "HTTP Host header for direct-origin requests")
 	flag.StringVar(&cfg.Path, "path", "/", "base request path")
 	flag.StringVar(&cfg.PayloadFile, "payloads", "examples/payloads.txt", "benign payload file")
 	flag.StringVar(&cfg.OutputFile, "output", "results.jsonl", "JSONL output file")
