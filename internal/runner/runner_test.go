@@ -80,14 +80,7 @@ func TestBuildRequestMatrix(t *testing.T) {
 }
 
 func TestBuildRequestOriginHostOverride(t *testing.T) {
-	req, err := buildRequest(
-		context.Background(),
-		"http://192.0.2.10:8080",
-		"/inspect",
-		PlacementQuery,
-		"benign value",
-		"app.example.test",
-	)
+	req, err := buildRequest(context.Background(), "http://192.0.2.10:8080", "/inspect", PlacementQuery, "benign value", "app.example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,18 +92,38 @@ func TestBuildRequestOriginHostOverride(t *testing.T) {
 	}
 }
 
-func TestClassifyResult(t *testing.T) {
-	blocks := map[int]struct{}{403: {}}
-	confirmed := Attempt{WAF: Observation{StatusCode: 403}, Origin: Observation{StatusCode: 200}}
-	allowed := Attempt{WAF: Observation{StatusCode: 200}, Origin: Observation{StatusCode: 200}}
+func TestClassifyDifferential(t *testing.T) {
+	originOK := Observation{StatusCode: 200, BodySHA256: "origin"}
+	cfg := Config{Mode: "differential", BlockStatuses: map[int]struct{}{403: {}}}
+	confirmed := Attempt{WAF: Observation{StatusCode: 403}, Origin: &originOK}
+	allowed := Attempt{WAF: Observation{StatusCode: 200, BodySHA256: "origin"}, Origin: &originOK}
 
-	if got := classifyResult([]Attempt{confirmed, confirmed, confirmed}, blocks); got != "CONFIRMED_FP" {
+	if got := classifyResult([]Attempt{confirmed, confirmed, confirmed}, cfg); got != "CONFIRMED_FP" {
 		t.Fatalf("verdict=%s", got)
 	}
-	if got := classifyResult([]Attempt{confirmed, allowed}, blocks); got != "FLAKY_FP" {
+	if got := classifyResult([]Attempt{confirmed, allowed}, cfg); got != "FLAKY_FP" {
 		t.Fatalf("verdict=%s", got)
 	}
-	if got := classifyResult([]Attempt{allowed}, blocks); got != "NOT_FP" {
+	if got := classifyResult([]Attempt{allowed}, cfg); got != "NOT_FP" {
 		t.Fatalf("verdict=%s", got)
+	}
+}
+
+func TestClassifyWAFOnlyAndSignature(t *testing.T) {
+	cfg := Config{Mode: "waf-only", BlockStatuses: map[int]struct{}{403: {}}}
+	blockedByBody := Attempt{WAF: Observation{StatusCode: 200, MatchedBlockSignature: "access denied"}}
+	allowed := Attempt{WAF: Observation{StatusCode: 200}}
+
+	if got := classifyResult([]Attempt{blockedByBody}, cfg); got != "BLOCKED_BENIGN_CANDIDATE" {
+		t.Fatalf("verdict=%s", got)
+	}
+	if got := classifyResult([]Attempt{allowed}, cfg); got != "NOT_BLOCKED" {
+		t.Fatalf("verdict=%s", got)
+	}
+}
+
+func TestMatchSignature(t *testing.T) {
+	if got := matchSignature([]byte("Request Rejected: Access Denied"), []string{"access denied"}); got != "access denied" {
+		t.Fatalf("signature=%q", got)
 	}
 }
