@@ -30,37 +30,41 @@ const (
 )
 
 var supportedPlacements = map[Placement]struct{}{
-	PlacementQuery: {}, PlacementForm: {}, PlacementJSON: {},
-	PlacementHeader: {}, PlacementCookie: {}, PlacementPath: {},
+	PlacementQuery:  {},
+	PlacementForm:   {},
+	PlacementJSON:   {},
+	PlacementHeader: {},
+	PlacementCookie: {},
+	PlacementPath:   {},
 }
 
 type Config struct {
-	Mode             string
-	WAFBaseURL       string
-	OriginBaseURL    string
-	OriginHost       string
-	OriginSNI        string
-	Path             string
-	PayloadFile      string
-	OutputFile       string
-	Timeout          time.Duration
-	MaxBodyBytes     int64
-	BlockStatuses    map[int]struct{}
-	BlockSignatures  []string
-	Placements       []Placement
-	Rechecks         int
+	Mode            string
+	WAFBaseURL      string
+	OriginBaseURL   string
+	OriginHost      string
+	OriginSNI       string
+	Path            string
+	PayloadFile     string
+	OutputFile      string
+	Timeout         time.Duration
+	MaxBodyBytes    int64
+	BlockStatuses   map[int]struct{}
+	BlockSignatures []string
+	Placements      []Placement
+	Rechecks        int
 }
 
 type Observation struct {
-	StatusCode           int           `json:"status_code,omitempty"`
-	Duration             time.Duration `json:"duration_ns"`
-	BodyBytes            int64         `json:"body_bytes,omitempty"`
-	BodySHA256           string        `json:"body_sha256,omitempty"`
-	ContentType          string        `json:"content_type,omitempty"`
-	Server               string        `json:"server,omitempty"`
-	Location             string        `json:"location,omitempty"`
-	MatchedBlockSignature string       `json:"matched_block_signature,omitempty"`
-	Error                string        `json:"error,omitempty"`
+	StatusCode            int           `json:"status_code,omitempty"`
+	Duration              time.Duration `json:"duration_ns"`
+	BodyBytes             int64         `json:"body_bytes,omitempty"`
+	BodySHA256            string        `json:"body_sha256,omitempty"`
+	ContentType           string        `json:"content_type,omitempty"`
+	Server                string        `json:"server,omitempty"`
+	Location              string        `json:"location,omitempty"`
+	MatchedBlockSignature string        `json:"matched_block_signature,omitempty"`
+	Error                 string        `json:"error,omitempty"`
 }
 
 type Attempt struct {
@@ -135,9 +139,15 @@ func Run(ctx context.Context, cfg Config) error {
 			}
 			verdict := classifyResult(attempts, cfg)
 			result := Result{
-				TestID: testID, Payload: payload, Placement: placement,
-				Method: methodFor(placement), Mode: cfg.Mode, Attempts: attempts,
-				Verdict: verdict, Confidence: confidenceFor(verdict), ExecutedAt: time.Now().UTC(),
+				TestID:     testID,
+				Payload:    payload,
+				Placement:  placement,
+				Method:     methodFor(placement),
+				Mode:       cfg.Mode,
+				Attempts:   attempts,
+				Verdict:    verdict,
+				Confidence: confidenceFor(verdict),
+				ExecutedAt: time.Now().UTC(),
 			}
 			if err := encoder.Encode(result); err != nil {
 				return fmt.Errorf("write result: %w", err)
@@ -150,15 +160,17 @@ func Run(ctx context.Context, cfg Config) error {
 func newClient(timeout time.Duration, serverName string) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if serverName != "" {
-		transport.TLSClientConfig = &tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12}
+		transport.TLSClientConfig = &tls.Config{
+			ServerName: serverName,
+			MinVersion: tls.VersionTLS12,
+		}
 	}
 	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
 func runAttempt(ctx context.Context, wafClient, originClient *http.Client, cfg Config, placement Placement, payload, testID string, number int) Attempt {
 	attempt := Attempt{Number: number}
-	waf := execute(ctx, wafClient, cfg.WAFBaseURL, cfg.Path, placement, payload, testID, "", cfg)
-	attempt.WAF = waf
+	attempt.WAF = execute(ctx, wafClient, cfg.WAFBaseURL, cfg.Path, placement, payload, testID, "", cfg)
 	if cfg.Mode == "differential" {
 		origin := execute(ctx, originClient, cfg.OriginBaseURL, cfg.Path, placement, payload, testID, cfg.OriginHost, cfg)
 		attempt.Origin = &origin
@@ -186,13 +198,13 @@ func execute(ctx context.Context, client *http.Client, baseURL, path string, pla
 	}
 	sum := sha256.Sum256(body)
 	return Observation{
-		StatusCode: resp.StatusCode,
-		Duration: time.Since(started),
-		BodyBytes: int64(len(body)),
-		BodySHA256: hex.EncodeToString(sum[:]),
-		ContentType: resp.Header.Get("Content-Type"),
-		Server: resp.Header.Get("Server"),
-		Location: resp.Header.Get("Location"),
+		StatusCode:            resp.StatusCode,
+		Duration:              time.Since(started),
+		BodyBytes:             int64(len(body)),
+		BodySHA256:            hex.EncodeToString(sum[:]),
+		ContentType:           resp.Header.Get("Content-Type"),
+		Server:                resp.Header.Get("Server"),
+		Location:              resp.Header.Get("Location"),
 		MatchedBlockSignature: matchSignature(body, cfg.BlockSignatures),
 	}
 }
