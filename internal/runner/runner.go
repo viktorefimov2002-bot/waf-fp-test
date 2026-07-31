@@ -38,6 +38,7 @@ var supportedPlacements = map[Placement]struct{}{
 type Config struct {
 	WAFBaseURL    string
 	OriginBaseURL string
+	OriginHost    string
 	Path          string
 	PayloadFile   string
 	OutputFile    string
@@ -140,14 +141,14 @@ func Run(ctx context.Context, cfg Config) error {
 func runAttempt(ctx context.Context, client *http.Client, cfg Config, placement Placement, payload, testID string, number int) Attempt {
 	return Attempt{
 		Number: number,
-		Origin: execute(ctx, client, cfg.OriginBaseURL, cfg.Path, placement, payload, testID),
-		WAF:    execute(ctx, client, cfg.WAFBaseURL, cfg.Path, placement, payload, testID),
+		Origin: execute(ctx, client, cfg.OriginBaseURL, cfg.Path, placement, payload, testID, cfg.OriginHost),
+		WAF:    execute(ctx, client, cfg.WAFBaseURL, cfg.Path, placement, payload, testID, ""),
 	}
 }
 
-func execute(ctx context.Context, client *http.Client, baseURL, path string, placement Placement, payload, testID string) Observation {
+func execute(ctx context.Context, client *http.Client, baseURL, path string, placement Placement, payload, testID, hostOverride string) Observation {
 	started := time.Now()
-	req, err := buildRequest(ctx, baseURL, path, placement, payload)
+	req, err := buildRequest(ctx, baseURL, path, placement, payload, hostOverride)
 	if err != nil {
 		return Observation{Duration: time.Since(started), Error: err.Error()}
 	}
@@ -163,7 +164,7 @@ func execute(ctx context.Context, client *http.Client, baseURL, path string, pla
 	return Observation{StatusCode: resp.StatusCode, Duration: time.Since(started)}
 }
 
-func buildRequest(ctx context.Context, baseURL, path string, placement Placement, payload string) (*http.Request, error) {
+func buildRequest(ctx context.Context, baseURL, path string, placement Placement, payload, hostOverride string) (*http.Request, error) {
 	target, err := buildBaseURL(baseURL, path)
 	if err != nil {
 		return nil, err
@@ -192,6 +193,9 @@ func buildRequest(ctx context.Context, baseURL, path string, placement Placement
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), body)
 	if err != nil {
 		return nil, err
+	}
+	if hostOverride != "" {
+		req.Host = hostOverride
 	}
 	switch placement {
 	case PlacementForm:
