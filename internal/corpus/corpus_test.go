@@ -8,7 +8,7 @@ import (
 
 func TestLoadJSONL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "corpus.jsonl")
-	content := "{\"id\":\"benign-1\",\"value\":\"Select a delivery method\",\"legitimacy\":\"verified\",\"review_status\":\"approved\"}\n"
+	content := "{\"id\":\"benign-1\",\"value\":\"Select a delivery method\",\"category\":\"sqli-like\",\"source\":\"external-corpus\"}\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -16,15 +16,14 @@ func TestLoadJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || !IsVerified(entries[0]) {
+	if len(entries) != 1 || entries[0].ID != "benign-1" || entries[0].Source != "external-corpus" {
 		t.Fatalf("unexpected entries: %#v", entries)
 	}
 }
 
-func TestVerifiedRequiresApproval(t *testing.T) {
+func TestJSONLRequiresIDAndValue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "corpus.jsonl")
-	content := "{\"id\":\"benign-1\",\"value\":\"value\",\"legitimacy\":\"verified\",\"review_status\":\"pending\"}\n"
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("{\"id\":\"missing-value\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(path); err == nil {
@@ -32,7 +31,7 @@ func TestVerifiedRequiresApproval(t *testing.T) {
 	}
 }
 
-func TestLegacyTextIsCandidate(t *testing.T) {
+func TestLegacyTextLoadsWithoutReviewMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "payloads.txt")
 	if err := os.WriteFile(path, []byte("benign value\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -41,7 +40,7 @@ func TestLegacyTextIsCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || IsVerified(entries[0]) || entries[0].ReviewStatus != ReviewPending {
+	if len(entries) != 1 || entries[0].ID != "legacy-000001" || entries[0].Source != "legacy-text" {
 		t.Fatalf("unexpected legacy entry: %#v", entries)
 	}
 }
