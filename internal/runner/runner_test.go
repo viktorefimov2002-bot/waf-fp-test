@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/viktorefimov2002-bot/waf-fp-test/internal/corpus"
 )
 
 func TestParsePlacements(t *testing.T) {
@@ -50,26 +48,21 @@ func TestBuildRequestOriginHostOverride(t *testing.T) {
 }
 
 func TestClassifyDifferential(t *testing.T) {
-	entry := corpus.Entry{ID: "verified-1", Value: "benign", Legitimacy: corpus.LegitimacyVerified, ReviewStatus: corpus.ReviewApproved}
 	originOK := Observation{StatusCode: 200, BodySHA256: "origin"}
 	cfg := Config{Mode: "differential", BlockStatuses: map[int]struct{}{403: {}}}
 	confirmed := Attempt{WAF: Observation{StatusCode: 403}, Origin: &originOK}
 	allowed := Attempt{WAF: Observation{StatusCode: 200, BodySHA256: "origin"}, Origin: &originOK}
-	if got := classifyResult([]Attempt{confirmed, confirmed, confirmed}, cfg, entry); got != "CONFIRMED_FP" { t.Fatalf("verdict=%s", got) }
-	if got := classifyResult([]Attempt{confirmed, allowed}, cfg, entry); got != "FLAKY_FP" { t.Fatalf("verdict=%s", got) }
-	if got := classifyResult([]Attempt{allowed}, cfg, entry); got != "NOT_FP" { t.Fatalf("verdict=%s", got) }
+	if got := classifyResult([]Attempt{confirmed, confirmed, confirmed}, cfg); got != "CONFIRMED_FP" { t.Fatalf("verdict=%s", got) }
+	if got := classifyResult([]Attempt{confirmed, allowed}, cfg); got != "FLAKY_FP" { t.Fatalf("verdict=%s", got) }
+	if got := classifyResult([]Attempt{allowed}, cfg); got != "NOT_FP" { t.Fatalf("verdict=%s", got) }
 }
 
-func TestClassifyWAFOnlyEvidenceLevels(t *testing.T) {
+func TestClassifyWAFOnlyWithoutPreReview(t *testing.T) {
+	cfg := Config{Mode: "waf-only", BlockStatuses: map[int]struct{}{403: {}}}
 	blocked := Attempt{WAF: Observation{StatusCode: 403}}
-	verified := corpus.Entry{ID: "verified-1", Value: "benign", Legitimacy: corpus.LegitimacyVerified, ReviewStatus: corpus.ReviewApproved}
-	candidate := corpus.Entry{ID: "candidate-1", Value: "benign", Legitimacy: corpus.LegitimacyCandidate, ReviewStatus: corpus.ReviewPending}
-
-	cfg := Config{Mode: "waf-only", BlockStatuses: map[int]struct{}{403: {}}, RequestContextVerified: true}
-	if got := classifyResult([]Attempt{blocked}, cfg, verified); got != "LIKELY_FP" { t.Fatalf("verified verdict=%s", got) }
-	if got := classifyResult([]Attempt{blocked}, cfg, candidate); got != "BLOCKED_BENIGN_CANDIDATE" { t.Fatalf("candidate verdict=%s", got) }
-	cfg.RequestContextVerified = false
-	if got := classifyResult([]Attempt{blocked}, cfg, verified); got != "BLOCKED_BENIGN_CANDIDATE" { t.Fatalf("unverified context verdict=%s", got) }
+	allowed := Attempt{WAF: Observation{StatusCode: 200}}
+	if got := classifyResult([]Attempt{blocked, blocked}, cfg); got != "BLOCKED_BENIGN_CANDIDATE" { t.Fatalf("blocked verdict=%s", got) }
+	if got := classifyResult([]Attempt{allowed}, cfg); got != "NOT_BLOCKED" { t.Fatalf("allowed verdict=%s", got) }
 }
 
 func TestMatchSignature(t *testing.T) {
