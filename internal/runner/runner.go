@@ -190,7 +190,7 @@ func execute(ctx context.Context, client *http.Client, baseURL, path string, pla
 	if err != nil {
 		return Observation{Duration: time.Since(started), Error: err.Error()}
 	}
-	req.Header.Set("User-Agent", "waf-fp-test/0.6")
+	req.Header.Set("User-Agent", "waf-fp-test/0.7")
 	req.Header.Set("X-WAF-FP-Test-ID", testID)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -280,9 +280,32 @@ func buildRequest(ctx context.Context, baseURL, path string, placement Placement
 	case PlacementHeader:
 		req.Header.Set("X-WAF-FP-Value", payload)
 	case PlacementCookie:
-		req.AddCookie(&http.Cookie{Name: "fp_param", Value: payload})
+		// net/http's Cookie.String silently removes semicolons, quotes, backslashes,
+		// spaces, and other non-cookie-octets. Percent-encode those UTF-8 bytes and
+		// set the header directly so every payload is transmitted deterministically.
+		req.Header.Set("Cookie", "fp_param="+encodeCookieValue(payload))
 	}
 	return req, nil
+}
+
+func encodeCookieValue(value string) string {
+	const upperHex = "0123456789ABCDEF"
+	var encoded strings.Builder
+	for _, b := range []byte(value) {
+		if isCookieOctet(b) && b != '%' {
+			encoded.WriteByte(b)
+			continue
+		}
+		encoded.WriteByte('%')
+		encoded.WriteByte(upperHex[b>>4])
+		encoded.WriteByte(upperHex[b&0x0f])
+	}
+	return encoded.String()
+}
+
+func isCookieOctet(b byte) bool {
+	return b == 0x21 || (b >= 0x23 && b <= 0x2b) || (b >= 0x2d && b <= 0x3a) ||
+		(b >= 0x3c && b <= 0x5b) || (b >= 0x5d && b <= 0x7e)
 }
 
 func buildBaseURL(baseURL, path string) (*url.URL, error) {
