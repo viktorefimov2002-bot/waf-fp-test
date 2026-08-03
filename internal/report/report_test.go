@@ -12,15 +12,11 @@ import (
 func writeResults(t *testing.T, path string, results []runner.Result) {
 	t.Helper()
 	f, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	if err != nil { t.Fatal(err) }
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	for _, result := range results {
-		if err := enc.Encode(result); err != nil {
-			t.Fatal(err)
-		}
+		if err := enc.Encode(result); err != nil { t.Fatal(err) }
 	}
 }
 
@@ -29,19 +25,26 @@ func TestSummaryAndComparison(t *testing.T) {
 	baseline := filepath.Join(dir, "baseline.jsonl")
 	current := filepath.Join(dir, "current.jsonl")
 	writeResults(t, baseline, []runner.Result{
-		{Payload: "a", Placement: runner.PlacementQuery, Method: "GET", Mode: "differential", Verdict: "NOT_FP"},
-		{Payload: "b", Placement: runner.PlacementJSON, Method: "POST", Mode: "differential", Verdict: "CONFIRMED_FP"},
+		{PayloadID: "a", Payload: "a", Placement: runner.PlacementQuery, Method: "GET", Mode: "waf-only", Verdict: "NOT_BLOCKED"},
+		{PayloadID: "b", Payload: "b", Placement: runner.PlacementJSON, Method: "POST", Mode: "differential", Verdict: "CONFIRMED_FP"},
 	})
 	writeResults(t, current, []runner.Result{
-		{Payload: "a", Placement: runner.PlacementQuery, Method: "GET", Mode: "differential", Verdict: "CONFIRMED_FP"},
-		{Payload: "b", Placement: runner.PlacementJSON, Method: "POST", Mode: "differential", Verdict: "NOT_FP"},
+		{PayloadID: "a", Payload: "a", Placement: runner.PlacementQuery, Method: "GET", Mode: "waf-only", Verdict: "LIKELY_FP", Legitimacy: "verified", ReviewStatus: "approved"},
+		{PayloadID: "b", Payload: "b", Placement: runner.PlacementJSON, Method: "POST", Mode: "differential", Verdict: "NOT_FP"},
 	})
 	summary, err := WriteSummary(current, filepath.Join(dir, "summary.md"))
-	if err != nil || summary.Total != 2 {
-		t.Fatalf("summary=%+v err=%v", summary, err)
-	}
+	if err != nil || summary.Total != 2 { t.Fatalf("summary=%+v err=%v", summary, err) }
 	comparison, err := WriteComparison(baseline, current, filepath.Join(dir, "comparison.md"))
-	if err != nil || comparison.NewFP != 1 || comparison.FixedFP != 1 {
-		t.Fatalf("comparison=%+v err=%v", comparison, err)
-	}
+	if err != nil || comparison.NewFP != 1 || comparison.FixedFP != 1 { t.Fatalf("comparison=%+v err=%v", comparison, err) }
+}
+
+func TestCandidateIsNotCountedAsFP(t *testing.T) {
+	dir := t.TempDir()
+	baseline := filepath.Join(dir, "baseline.jsonl")
+	current := filepath.Join(dir, "current.jsonl")
+	writeResults(t, baseline, nil)
+	writeResults(t, current, []runner.Result{{PayloadID: "candidate", Payload: "candidate", Placement: runner.PlacementQuery, Method: "GET", Mode: "waf-only", Verdict: "BLOCKED_BENIGN_CANDIDATE"}})
+	comparison, err := WriteComparison(baseline, current, filepath.Join(dir, "comparison.md"))
+	if err != nil { t.Fatal(err) }
+	if comparison.NewFP != 0 { t.Fatalf("candidate counted as FP: %+v", comparison) }
 }
