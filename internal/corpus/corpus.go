@@ -10,21 +10,12 @@ import (
 	"strings"
 )
 
-const (
-	LegitimacyVerified = "verified"
-	LegitimacyCandidate = "candidate"
-	ReviewApproved      = "approved"
-	ReviewPending       = "pending"
-)
-
 type Entry struct {
 	ID              string   `json:"id"`
 	Value           string   `json:"value"`
 	Category        string   `json:"category,omitempty"`
 	Source          string   `json:"source,omitempty"`
 	SourceReference string   `json:"source_reference,omitempty"`
-	Legitimacy      string   `json:"legitimacy"`
-	ReviewStatus    string   `json:"review_status"`
 	Description     string   `json:"description,omitempty"`
 	Tags            []string `json:"tags,omitempty"`
 }
@@ -34,10 +25,6 @@ func Load(path string) ([]Entry, error) {
 		return loadJSONL(path)
 	}
 	return loadLegacyText(path)
-}
-
-func IsVerified(entry Entry) bool {
-	return entry.Legitimacy == LegitimacyVerified && entry.ReviewStatus == ReviewApproved
 }
 
 func loadJSONL(path string) ([]Entry, error) {
@@ -93,11 +80,9 @@ func loadLegacyText(path string) ([]Entry, error) {
 			continue
 		}
 		entries = append(entries, Entry{
-			ID:           fmt.Sprintf("legacy-%06d", len(entries)+1),
-			Value:        value,
-			Source:       "legacy-text",
-			Legitimacy:   LegitimacyCandidate,
-			ReviewStatus: ReviewPending,
+			ID:     fmt.Sprintf("legacy-%06d", len(entries)+1),
+			Value:  value,
+			Source: "legacy-text",
 		})
 	}
 	if err := scanner.Err(); err != nil {
@@ -112,15 +97,6 @@ func loadLegacyText(path string) ([]Entry, error) {
 func validate(entry Entry) error {
 	if strings.TrimSpace(entry.ID) == "" || strings.TrimSpace(entry.Value) == "" {
 		return errors.New("id and value are required")
-	}
-	if entry.Legitimacy != LegitimacyVerified && entry.Legitimacy != LegitimacyCandidate {
-		return fmt.Errorf("unsupported legitimacy %q", entry.Legitimacy)
-	}
-	if entry.ReviewStatus != ReviewApproved && entry.ReviewStatus != ReviewPending {
-		return fmt.Errorf("unsupported review_status %q", entry.ReviewStatus)
-	}
-	if entry.Legitimacy == LegitimacyVerified && entry.ReviewStatus != ReviewApproved {
-		return errors.New("verified entries must have review_status approved")
 	}
 	return nil
 }
