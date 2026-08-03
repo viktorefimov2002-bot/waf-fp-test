@@ -95,10 +95,20 @@ For baseline purposes, only `CONFIRMED_FP` and `LIKELY_FP` are treated as FP ver
 - `NOT_FP` / `NOT_BLOCKED`;
 - `WAF_ERROR` / `ORIGIN_ERROR`.
 
+## Corpus review workflow
+
+External datasets must first be imported as `candidate` / `pending`. They become `verified` / `approved` only after manual review confirms that the value is benign and the provenance is recorded.
+
+```text
+external source -> candidate/pending -> manual review -> verified/approved
+```
+
+The initial normalized corpus and loader are now in place. The next implementation stage is an importer/review command that converts external source formats into JSONL without automatically trusting them.
+
 ## Next milestones
 
-1. Import external false-positive corpora into the normalized format while preserving provenance.
-2. Add review tooling for promoting entries from `candidate/pending` to `verified/approved`.
+1. Add corpus import and review commands while preserving provenance.
+2. Import selected external false-positive corpora as `candidate/pending`.
 3. Add application profiles and authentication support.
 4. Expand request structures: multipart, XML, GraphQL, nested JSON, repeated parameters, and encodings.
 5. Add an optional echo-origin for controlled integration tests.
