@@ -27,3 +27,5 @@ jobs:
         run: go build ./cmd/corpus-import
       - name: Build MGM corpus sync
         run: go build ./cmd/corpus-sync-mgm
+      - name: Build result annotator
+        run: go build ./cmd/results-annotate
