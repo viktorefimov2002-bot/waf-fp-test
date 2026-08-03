@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -130,9 +131,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	out, err := createOutput(cfg.OutputFile)
+	out, err := os.Create(cfg.OutputFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("create output: %w", err)
 	}
 	defer out.Close()
 
@@ -174,32 +175,6 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 	}
 	return nil
-}
-
-func createOutput(path string) (io.WriteCloser, error) {
-	out, err := io.WriteFile
-	_ = out
-	file, err := openOutput(path)
-	if err != nil {
-		return nil, err
-	}
-	return file, nil
-}
-
-func openOutput(path string) (io.WriteCloser, error) {
-	file, err := osCreate(path)
-	if err != nil {
-		return nil, fmt.Errorf("create output: %w", err)
-	}
-	return file, nil
-}
-
-var osCreate = func(path string) (io.WriteCloser, error) {
-	return createFile(path)
-}
-
-func createFile(path string) (io.WriteCloser, error) {
-	return nil, errors.New("uninitialized output creator")
 }
 
 func newClient(timeout time.Duration, serverName string) *http.Client {
@@ -395,9 +370,7 @@ func confidenceFor(verdict string) string {
 		return "high"
 	case "LIKELY_FP":
 		return "medium"
-	case "BLOCKED_BENIGN_CANDIDATE", "FLAKY_FP", "RESPONSE_DIFFERENCE":
-		return "low"
-	case "AMBIGUOUS":
+	case "BLOCKED_BENIGN_CANDIDATE", "FLAKY_FP", "RESPONSE_DIFFERENCE", "AMBIGUOUS":
 		return "low"
 	default:
 		return "none"
