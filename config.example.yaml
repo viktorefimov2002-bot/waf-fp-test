@@ -11,6 +11,8 @@ origin:
 
 request:
   payloads: examples/corpus.jsonl
+  # Set true only after manually validating the endpoint, method, placement,
+  # authentication state, and a control request without the tested value.
   context_verified: false
   placements: [query, form, json, header, cookie, path]
 
