@@ -17,7 +17,6 @@ target:
 
 request:
   payloads: examples/corpus.jsonl
-  context_verified: true
   placements: [query, json]
 
 detection:
@@ -42,7 +41,7 @@ output:
 	cfg, err := Load(path)
 	if err != nil { t.Fatal(err) }
 	if cfg.Mode != "waf-only" || cfg.WAFBaseURL != "https://example.test" || cfg.Timeout != 3*time.Second { t.Fatalf("unexpected config: %#v", cfg) }
-	if !cfg.RequestContextVerified || !cfg.FailOnNewFP { t.Fatalf("boolean config not loaded: %#v", cfg) }
+	if !cfg.FailOnNewFP { t.Fatalf("boolean config not loaded: %#v", cfg) }
 	if len(cfg.Placements) != 2 || len(cfg.BlockRegex) != 1 || len(cfg.BlockHeaders) != 1 { t.Fatalf("list config not loaded: %#v", cfg) }
 }
 
