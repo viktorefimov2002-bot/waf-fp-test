@@ -24,7 +24,8 @@ func main() {
 	flag.StringVar(&cli.OriginHost, "origin-host", "", "origin HTTP Host")
 	flag.StringVar(&cli.OriginSNI, "origin-sni", "", "origin TLS SNI")
 	flag.StringVar(&cli.Path, "path", defaults.Path, "request path")
-	flag.StringVar(&cli.PayloadFile, "payloads", defaults.PayloadFile, "payload file")
+	flag.StringVar(&cli.PayloadFile, "payloads", defaults.PayloadFile, "payload file or normalized JSONL corpus")
+	flag.BoolVar(&cli.RequestContextVerified, "request-context-verified", false, "mark the configured request context as manually validated")
 	flag.StringVar(&cli.OutputFile, "output", defaults.OutputFile, "JSONL output")
 	flag.StringVar(&cli.SummaryFile, "summary", defaults.SummaryFile, "Markdown summary")
 	flag.StringVar(&cli.BaselineFile, "baseline", "", "baseline JSONL")
@@ -44,15 +45,11 @@ func main() {
 	var err error
 	if configPath != "" {
 		cfg, err = appconfig.Load(configPath)
-		if err != nil {
-			exitConfig(err)
-		}
+		if err != nil { exitConfig(err) }
 	}
 	visited := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { visited[f.Name] = true })
-	if err := applyCLIOverrides(&cfg, cli, placements, blockStatuses, blockSignatures, blockRegex, blockHeaders, visited); err != nil {
-		exitConfig(err)
-	}
+	if err := applyCLIOverrides(&cfg, cli, placements, blockStatuses, blockSignatures, blockRegex, blockHeaders, visited); err != nil { exitConfig(err) }
 	if err := runner.Run(context.Background(), cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "run failed:", err)
 		os.Exit(1)
@@ -72,9 +69,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("comparison written to", cfg.ComparisonFile)
-		if cfg.FailOnNewFP && cmp.NewFP > 0 {
-			os.Exit(3)
-		}
+		if cfg.FailOnNewFP && cmp.NewFP > 0 { os.Exit(3) }
 	}
 }
 
@@ -86,6 +81,7 @@ func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, status
 	if set["origin-sni"] { cfg.OriginSNI = cli.OriginSNI }
 	if set["path"] { cfg.Path = cli.Path }
 	if set["payloads"] { cfg.PayloadFile = cli.PayloadFile }
+	if set["request-context-verified"] { cfg.RequestContextVerified = cli.RequestContextVerified }
 	if set["output"] { cfg.OutputFile = cli.OutputFile }
 	if set["summary"] { cfg.SummaryFile = cli.SummaryFile }
 	if set["baseline"] { cfg.BaselineFile = cli.BaselineFile }
@@ -101,7 +97,33 @@ func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, status
 	if set["block-header-contains"] { h, e := parseHeaderIndicators(parseStrings(headers)); if e != nil { return e }; cfg.BlockHeaders = h }
 	return nil
 }
-func parseStatuses(v string) (map[int]struct{}, error) { out := map[int]struct{}{}; for _, x := range strings.Split(v, ",") { n, err := strconv.Atoi(strings.TrimSpace(x)); if err != nil || n < 100 || n > 599 { return nil, fmt.Errorf("invalid HTTP status %q", x) }; out[n] = struct{}{} }; return out, nil }
-func parseStrings(v string) []string { var out []string; for _, x := range strings.Split(v, ",") { if x = strings.TrimSpace(x); x != "" { out = append(out, x) } }; return out }
-func parseHeaderIndicators(items []string) ([]runner.HeaderIndicator, error) { var out []runner.HeaderIndicator; for _, item := range items { k, v, ok := strings.Cut(item, "="); if !ok || strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" { return nil, fmt.Errorf("invalid header indicator %q", item) }; out = append(out, runner.HeaderIndicator{Header: strings.TrimSpace(k), Contains: strings.TrimSpace(v)}) }; return out, nil }
+
+func parseStatuses(v string) (map[int]struct{}, error) {
+	out := map[int]struct{}{}
+	for _, x := range strings.Split(v, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(x))
+		if err != nil || n < 100 || n > 599 { return nil, fmt.Errorf("invalid HTTP status %q", x) }
+		out[n] = struct{}{}
+	}
+	return out, nil
+}
+
+func parseStrings(v string) []string {
+	var out []string
+	for _, x := range strings.Split(v, ",") {
+		if x = strings.TrimSpace(x); x != "" { out = append(out, x) }
+	}
+	return out
+}
+
+func parseHeaderIndicators(items []string) ([]runner.HeaderIndicator, error) {
+	var out []runner.HeaderIndicator
+	for _, item := range items {
+		k, v, ok := strings.Cut(item, "=")
+		if !ok || strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" { return nil, fmt.Errorf("invalid header indicator %q", item) }
+		out = append(out, runner.HeaderIndicator{Header: strings.TrimSpace(k), Contains: strings.TrimSpace(v)})
+	}
+	return out, nil
+}
+
 func exitConfig(err error) { fmt.Fprintln(os.Stderr, "configuration error:", err); os.Exit(2) }
