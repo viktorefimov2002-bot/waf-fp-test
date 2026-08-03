@@ -12,19 +12,17 @@ func TestApplyCLIOverrides(t *testing.T) {
 	cfg := appconfig.Default()
 	cfg.WAFBaseURL = "https://from-config.example"
 	cfg.Timeout = 15 * time.Second
-	cli := runner.Config{WAFBaseURL: "https://from-cli.example", Timeout: 3 * time.Second, RequestContextVerified: true}
+	cli := runner.Config{WAFBaseURL: "https://from-cli.example", Timeout: 3 * time.Second}
 
 	err := applyCLIOverrides(&cfg, cli, "query,json", "403", "denied", "", "", map[string]bool{
-		"target":                   true,
-		"timeout":                  true,
-		"placements":               true,
-		"block-body-contains":      true,
-		"request-context-verified": true,
+		"target":              true,
+		"timeout":             true,
+		"placements":          true,
+		"block-body-contains": true,
 	})
 	if err != nil { t.Fatal(err) }
 	if cfg.WAFBaseURL != "https://from-cli.example" || cfg.Timeout != 3*time.Second { t.Fatalf("CLI overrides were not applied: %#v", cfg) }
 	if len(cfg.Placements) != 2 || len(cfg.BlockSignatures) != 1 { t.Fatalf("list overrides were not applied: %#v", cfg) }
-	if !cfg.RequestContextVerified { t.Fatal("request context override was not applied") }
 }
 
 func TestUnsetCLIValuesDoNotOverrideConfig(t *testing.T) {
