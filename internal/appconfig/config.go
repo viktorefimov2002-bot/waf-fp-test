@@ -14,7 +14,7 @@ import (
 
 func Default() runner.Config {
 	p, _ := runner.ParsePlacements("query,form,json,header,cookie,path")
-	return runner.Config{Mode: "differential", Path: "/", PayloadFile: "examples/payloads.txt", OutputFile: "results.jsonl", SummaryFile: "summary.md", ComparisonFile: "comparison.md", Timeout: 10 * time.Second, Rechecks: 2, MaxBodyBytes: 1048576, BlockStatuses: map[int]struct{}{403: {}, 406: {}}, Placements: p}
+	return runner.Config{Mode: "differential", Path: "/", PayloadFile: "examples/corpus.jsonl", OutputFile: "results.jsonl", SummaryFile: "summary.md", ComparisonFile: "comparison.md", Timeout: 10 * time.Second, Rechecks: 2, MaxBodyBytes: 1048576, BlockStatuses: map[int]struct{}{403: {}, 406: {}}, Placements: p}
 }
 
 func Load(path string) (runner.Config, error) {
@@ -24,11 +24,28 @@ func Load(path string) (runner.Config, error) {
 		return runner.Config{}, err
 	}
 	known := map[string]func(string) error{
-		"mode": func(v string) error { cfg.Mode = v; return nil }, "target.url": func(v string) error { cfg.WAFBaseURL = v; return nil }, "target.path": func(v string) error { cfg.Path = v; return nil }, "origin.url": func(v string) error { cfg.OriginBaseURL = v; return nil }, "origin.host": func(v string) error { cfg.OriginHost = v; return nil }, "origin.sni": func(v string) error { cfg.OriginSNI = v; return nil }, "request.payloads": func(v string) error { cfg.PayloadFile = v; return nil }, "request.placements": func(v string) error {
-			p, e := runner.ParsePlacements(strings.Join(parseList(v), ","))
-			cfg.Placements = p
-			return e
-		}, "detection.block_statuses": func(v string) error { s, e := parseStatuses(parseList(v)); cfg.BlockStatuses = s; return e }, "detection.block_body_contains": func(v string) error { cfg.BlockSignatures = parseList(v); return nil }, "detection.block_body_regex": func(v string) error { cfg.BlockRegex = parseList(v); return nil }, "detection.block_header_contains": func(v string) error { h, e := parseHeaders(parseList(v)); cfg.BlockHeaders = h; return e }, "execution.timeout": func(v string) error { d, e := time.ParseDuration(v); cfg.Timeout = d; return e }, "execution.rechecks": func(v string) error { n, e := strconv.Atoi(v); cfg.Rechecks = n; return e }, "execution.max_body_bytes": func(v string) error { n, e := strconv.ParseInt(v, 10, 64); cfg.MaxBodyBytes = n; return e }, "output.file": func(v string) error { cfg.OutputFile = v; return nil }, "output.summary": func(v string) error { cfg.SummaryFile = v; return nil }, "output.baseline": func(v string) error { cfg.BaselineFile = v; return nil }, "output.comparison": func(v string) error { cfg.ComparisonFile = v; return nil }, "output.fail_on_new_fp": func(v string) error { b, e := strconv.ParseBool(v); cfg.FailOnNewFP = b; return e }}
+		"mode": func(v string) error { cfg.Mode = v; return nil },
+		"target.url": func(v string) error { cfg.WAFBaseURL = v; return nil },
+		"target.path": func(v string) error { cfg.Path = v; return nil },
+		"origin.url": func(v string) error { cfg.OriginBaseURL = v; return nil },
+		"origin.host": func(v string) error { cfg.OriginHost = v; return nil },
+		"origin.sni": func(v string) error { cfg.OriginSNI = v; return nil },
+		"request.payloads": func(v string) error { cfg.PayloadFile = v; return nil },
+		"request.context_verified": func(v string) error { b, e := strconv.ParseBool(v); cfg.RequestContextVerified = b; return e },
+		"request.placements": func(v string) error { p, e := runner.ParsePlacements(strings.Join(parseList(v), ",")); cfg.Placements = p; return e },
+		"detection.block_statuses": func(v string) error { s, e := parseStatuses(parseList(v)); cfg.BlockStatuses = s; return e },
+		"detection.block_body_contains": func(v string) error { cfg.BlockSignatures = parseList(v); return nil },
+		"detection.block_body_regex": func(v string) error { cfg.BlockRegex = parseList(v); return nil },
+		"detection.block_header_contains": func(v string) error { h, e := parseHeaders(parseList(v)); cfg.BlockHeaders = h; return e },
+		"execution.timeout": func(v string) error { d, e := time.ParseDuration(v); cfg.Timeout = d; return e },
+		"execution.rechecks": func(v string) error { n, e := strconv.Atoi(v); cfg.Rechecks = n; return e },
+		"execution.max_body_bytes": func(v string) error { n, e := strconv.ParseInt(v, 10, 64); cfg.MaxBodyBytes = n; return e },
+		"output.file": func(v string) error { cfg.OutputFile = v; return nil },
+		"output.summary": func(v string) error { cfg.SummaryFile = v; return nil },
+		"output.baseline": func(v string) error { cfg.BaselineFile = v; return nil },
+		"output.comparison": func(v string) error { cfg.ComparisonFile = v; return nil },
+		"output.fail_on_new_fp": func(v string) error { b, e := strconv.ParseBool(v); cfg.FailOnNewFP = b; return e },
+	}
 	for k, v := range values {
 		set, ok := known[k]
 		if !ok {
@@ -52,6 +69,7 @@ func parseHeaders(items []string) ([]runner.HeaderIndicator, error) {
 	}
 	return out, nil
 }
+
 func parseFile(path string) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -100,6 +118,7 @@ func parseFile(path string) (map[string]string, error) {
 	}
 	return values, nil
 }
+
 func parseList(v string) []string {
 	v = strings.TrimSpace(v)
 	if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
@@ -117,6 +136,7 @@ func parseList(v string) []string {
 	}
 	return out
 }
+
 func parseStatuses(items []string) (map[int]struct{}, error) {
 	out := map[int]struct{}{}
 	for _, x := range items {
@@ -131,26 +151,22 @@ func parseStatuses(items []string) (map[int]struct{}, error) {
 	}
 	return out, nil
 }
+
 func stripComment(v string) string {
 	single, double := false, false
 	for i, r := range v {
 		switch r {
 		case '\'':
-			if !double {
-				single = !single
-			}
+			if !double { single = !single }
 		case '"':
-			if !single {
-				double = !double
-			}
+			if !single { double = !double }
 		case '#':
-			if !single && !double {
-				return strings.TrimSpace(v[:i])
-			}
+			if !single && !double { return strings.TrimSpace(v[:i]) }
 		}
 	}
 	return strings.TrimSpace(v)
 }
+
 func unquote(v string) string {
 	if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
 		return v[1 : len(v)-1]
