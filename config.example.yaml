@@ -16,6 +16,8 @@ request:
 detection:
   block_statuses: [403, 406]
   block_body_contains: ["access denied", "request rejected"]
+  block_body_regex: ["(?i)incident[ _-]*id"]
+  block_header_contains: ["Server=pingora", "X-WAF-Action=block"]
 
 execution:
   timeout: 10s
@@ -24,3 +26,7 @@ execution:
 
 output:
   file: results.jsonl
+  summary: summary.md
+  baseline: ""
+  comparison: comparison.md
+  fail_on_new_fp: false
