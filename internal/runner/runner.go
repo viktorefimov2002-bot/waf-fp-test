@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -13,10 +12,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/viktorefimov2002-bot/waf-fp-test/internal/corpus"
 )
 
 type Placement string
@@ -38,26 +38,27 @@ type HeaderIndicator struct {
 }
 
 type Config struct {
-	Mode            string
-	WAFBaseURL      string
-	OriginBaseURL   string
-	OriginHost      string
-	OriginSNI       string
-	Path            string
-	PayloadFile     string
-	OutputFile      string
-	SummaryFile     string
-	BaselineFile    string
-	ComparisonFile  string
-	FailOnNewFP     bool
-	Timeout         time.Duration
-	MaxBodyBytes    int64
-	BlockStatuses   map[int]struct{}
-	BlockSignatures []string
-	BlockRegex      []string
-	BlockHeaders    []HeaderIndicator
-	Placements      []Placement
-	Rechecks        int
+	Mode                   string
+	WAFBaseURL             string
+	OriginBaseURL          string
+	OriginHost             string
+	OriginSNI              string
+	Path                   string
+	PayloadFile            string
+	RequestContextVerified bool
+	OutputFile             string
+	SummaryFile            string
+	BaselineFile           string
+	ComparisonFile         string
+	FailOnNewFP            bool
+	Timeout                time.Duration
+	MaxBodyBytes           int64
+	BlockStatuses          map[int]struct{}
+	BlockSignatures        []string
+	BlockRegex             []string
+	BlockHeaders           []HeaderIndicator
+	Placements             []Placement
+	Rechecks               int
 }
 
 type Observation struct {
@@ -73,21 +74,29 @@ type Observation struct {
 	MatchedBlockHeader    string        `json:"matched_block_header,omitempty"`
 	Error                 string        `json:"error,omitempty"`
 }
+
 type Attempt struct {
 	Number int          `json:"number"`
 	WAF    Observation  `json:"waf"`
 	Origin *Observation `json:"origin,omitempty"`
 }
+
 type Result struct {
-	TestID     string    `json:"test_id"`
-	Payload    string    `json:"payload"`
-	Placement  Placement `json:"placement"`
-	Method     string    `json:"method"`
-	Mode       string    `json:"mode"`
-	Attempts   []Attempt `json:"attempts"`
-	Verdict    string    `json:"verdict"`
-	Confidence string    `json:"confidence"`
-	ExecutedAt time.Time `json:"executed_at"`
+	TestID          string    `json:"test_id"`
+	PayloadID       string    `json:"payload_id"`
+	Payload         string    `json:"payload"`
+	Category        string    `json:"category,omitempty"`
+	Source          string    `json:"source,omitempty"`
+	SourceReference string    `json:"source_reference,omitempty"`
+	Legitimacy      string    `json:"legitimacy"`
+	ReviewStatus    string    `json:"review_status"`
+	Placement       Placement `json:"placement"`
+	Method          string    `json:"method"`
+	Mode            string    `json:"mode"`
+	Attempts        []Attempt `json:"attempts"`
+	Verdict         string    `json:"verdict"`
+	Confidence      string    `json:"confidence"`
+	ExecutedAt      time.Time `json:"executed_at"`
 }
 
 func ParsePlacements(value string) ([]Placement, error) {
@@ -117,37 +126,80 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := validateConfig(cfg); err != nil {
 		return err
 	}
-	payloads, err := readPayloads(cfg.PayloadFile)
+	entries, err := corpus.Load(cfg.PayloadFile)
 	if err != nil {
 		return err
 	}
-	out, err := os.Create(cfg.OutputFile)
+	out, err := createOutput(cfg.OutputFile)
 	if err != nil {
-		return fmt.Errorf("create output: %w", err)
+		return err
 	}
 	defer out.Close()
+
 	wafClient := newClient(cfg.Timeout, "")
 	originClient := newClient(cfg.Timeout, cfg.OriginSNI)
 	enc := json.NewEncoder(out)
 	seq := 0
-	for _, payload := range payloads {
+	for _, entry := range entries {
 		for _, placement := range cfg.Placements {
 			seq++
 			id := fmt.Sprintf("waf-fp-%d-%06d", time.Now().UnixNano(), seq)
-			attempts := []Attempt{runAttempt(ctx, wafClient, originClient, cfg, placement, payload, id, 1)}
-			if isCandidate(classifyAttempt(attempts[0], cfg), cfg.Mode) {
+			attempts := []Attempt{runAttempt(ctx, wafClient, originClient, cfg, placement, entry.Value, id, 1)}
+			if isCandidate(classifyAttempt(attempts[0], cfg, entry), cfg.Mode) {
 				for n := 0; n < cfg.Rechecks; n++ {
-					attempts = append(attempts, runAttempt(ctx, wafClient, originClient, cfg, placement, payload, id, n+2))
+					attempts = append(attempts, runAttempt(ctx, wafClient, originClient, cfg, placement, entry.Value, id, n+2))
 				}
 			}
-			verdict := classifyResult(attempts, cfg)
-			r := Result{TestID: id, Payload: payload, Placement: placement, Method: methodFor(placement), Mode: cfg.Mode, Attempts: attempts, Verdict: verdict, Confidence: confidenceFor(verdict), ExecutedAt: time.Now().UTC()}
-			if err := enc.Encode(r); err != nil {
+			verdict := classifyResult(attempts, cfg, entry)
+			result := Result{
+				TestID:          id,
+				PayloadID:       entry.ID,
+				Payload:         entry.Value,
+				Category:        entry.Category,
+				Source:          entry.Source,
+				SourceReference: entry.SourceReference,
+				Legitimacy:      entry.Legitimacy,
+				ReviewStatus:    entry.ReviewStatus,
+				Placement:       placement,
+				Method:          methodFor(placement),
+				Mode:            cfg.Mode,
+				Attempts:        attempts,
+				Verdict:         verdict,
+				Confidence:      confidenceFor(verdict),
+				ExecutedAt:      time.Now().UTC(),
+			}
+			if err := enc.Encode(result); err != nil {
 				return fmt.Errorf("write result: %w", err)
 			}
 		}
 	}
 	return nil
+}
+
+func createOutput(path string) (io.WriteCloser, error) {
+	out, err := io.WriteFile
+	_ = out
+	file, err := openOutput(path)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
+func openOutput(path string) (io.WriteCloser, error) {
+	file, err := osCreate(path)
+	if err != nil {
+		return nil, fmt.Errorf("create output: %w", err)
+	}
+	return file, nil
+}
+
+var osCreate = func(path string) (io.WriteCloser, error) {
+	return createFile(path)
+}
+
+func createFile(path string) (io.WriteCloser, error) {
+	return nil, errors.New("uninitialized output creator")
 }
 
 func newClient(timeout time.Duration, serverName string) *http.Client {
@@ -157,6 +209,7 @@ func newClient(timeout time.Duration, serverName string) *http.Client {
 	}
 	return &http.Client{Timeout: timeout, Transport: tr}
 }
+
 func runAttempt(ctx context.Context, wafClient, originClient *http.Client, cfg Config, p Placement, payload, id string, n int) Attempt {
 	a := Attempt{Number: n}
 	a.WAF = execute(ctx, wafClient, cfg.WAFBaseURL, cfg.Path, p, payload, id, "", cfg)
@@ -166,13 +219,14 @@ func runAttempt(ctx context.Context, wafClient, originClient *http.Client, cfg C
 	}
 	return a
 }
+
 func execute(ctx context.Context, client *http.Client, base, path string, p Placement, payload, id, host string, cfg Config) Observation {
 	start := time.Now()
 	req, err := buildRequest(ctx, base, path, p, payload, host)
 	if err != nil {
 		return Observation{Duration: time.Since(start), Error: err.Error()}
 	}
-	req.Header.Set("User-Agent", "waf-fp-test/0.4")
+	req.Header.Set("User-Agent", "waf-fp-test/0.5")
 	req.Header.Set("X-WAF-FP-Test-ID", id)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -186,6 +240,7 @@ func execute(ctx context.Context, client *http.Client, base, path string, p Plac
 	sum := sha256.Sum256(body)
 	return Observation{StatusCode: resp.StatusCode, Duration: time.Since(start), BodyBytes: int64(len(body)), BodySHA256: hex.EncodeToString(sum[:]), ContentType: resp.Header.Get("Content-Type"), Server: resp.Header.Get("Server"), Location: resp.Header.Get("Location"), MatchedBlockSignature: matchSignature(body, cfg.BlockSignatures), MatchedBlockRegex: matchRegex(body, cfg.BlockRegex), MatchedBlockHeader: matchHeader(resp.Header, cfg.BlockHeaders)}
 }
+
 func matchSignature(body []byte, sigs []string) string {
 	lower := strings.ToLower(string(body))
 	for _, s := range sigs {
@@ -195,6 +250,7 @@ func matchSignature(body []byte, sigs []string) string {
 	}
 	return ""
 }
+
 func matchRegex(body []byte, patterns []string) string {
 	for _, p := range patterns {
 		re, err := regexp.Compile(p)
@@ -204,6 +260,7 @@ func matchRegex(body []byte, patterns []string) string {
 	}
 	return ""
 }
+
 func matchHeader(h http.Header, indicators []HeaderIndicator) string {
 	for _, i := range indicators {
 		v := h.Get(i.Header)
@@ -213,6 +270,7 @@ func matchHeader(h http.Header, indicators []HeaderIndicator) string {
 	}
 	return ""
 }
+
 func buildRequest(ctx context.Context, base, path string, p Placement, payload, host string) (*http.Request, error) {
 	target, err := buildBaseURL(base, path)
 	if err != nil {
@@ -255,6 +313,7 @@ func buildRequest(ctx context.Context, base, path string, p Placement, payload, 
 	}
 	return req, nil
 }
+
 func buildBaseURL(baseURL, path string) (*url.URL, error) {
 	b, err := url.Parse(baseURL)
 	if err != nil {
@@ -266,95 +325,85 @@ func buildBaseURL(baseURL, path string) (*url.URL, error) {
 	b.Path = strings.TrimRight(b.Path, "/") + "/" + strings.TrimLeft(path, "/")
 	return b, nil
 }
+
 func methodFor(p Placement) string {
 	if p == PlacementForm || p == PlacementJSON {
 		return http.MethodPost
 	}
 	return http.MethodGet
 }
+
 func blocked(o Observation, statuses map[int]struct{}) bool {
 	_, ok := statuses[o.StatusCode]
 	return ok || o.MatchedBlockSignature != "" || o.MatchedBlockRegex != "" || o.MatchedBlockHeader != ""
 }
-func classifyAttempt(a Attempt, cfg Config) string {
+
+func classifyAttempt(a Attempt, cfg Config, entry corpus.Entry) string {
 	if a.WAF.Error != "" {
 		return "WAF_ERROR"
 	}
-	wb := blocked(a.WAF, cfg.BlockStatuses)
+	wafBlocked := blocked(a.WAF, cfg.BlockStatuses)
 	if cfg.Mode == "waf-only" {
-		if wb {
-			return "BLOCKED_BENIGN_CANDIDATE"
+		if !wafBlocked {
+			return "NOT_BLOCKED"
 		}
-		return "NOT_BLOCKED"
+		if corpus.IsVerified(entry) && cfg.RequestContextVerified {
+			return "LIKELY_FP"
+		}
+		return "BLOCKED_BENIGN_CANDIDATE"
 	}
 	if a.Origin == nil || a.Origin.Error != "" {
 		return "ORIGIN_ERROR"
 	}
-	ob := blocked(*a.Origin, cfg.BlockStatuses)
+	originBlocked := blocked(*a.Origin, cfg.BlockStatuses)
 	switch {
-	case wb && !ob:
+	case wafBlocked && !originBlocked:
 		return "CONFIRMED_FP"
-	case wb && ob:
+	case wafBlocked && originBlocked:
 		return "AMBIGUOUS"
-	case !wb && responsesDiffer(a.WAF, *a.Origin):
+	case !wafBlocked && responsesDiffer(a.WAF, *a.Origin):
 		return "RESPONSE_DIFFERENCE"
 	default:
 		return "NOT_FP"
 	}
 }
+
 func responsesDiffer(a, b Observation) bool {
 	return a.StatusCode != b.StatusCode || a.BodySHA256 != b.BodySHA256 || a.Location != b.Location
 }
-func isCandidate(v, mode string) bool {
-	return v == "CONFIRMED_FP" || (mode == "waf-only" && v == "BLOCKED_BENIGN_CANDIDATE")
+
+func isCandidate(verdict, mode string) bool {
+	return verdict == "CONFIRMED_FP" || (mode == "waf-only" && (verdict == "LIKELY_FP" || verdict == "BLOCKED_BENIGN_CANDIDATE"))
 }
-func classifyResult(attempts []Attempt, cfg Config) string {
-	first := classifyAttempt(attempts[0], cfg)
+
+func classifyResult(attempts []Attempt, cfg Config, entry corpus.Entry) string {
+	first := classifyAttempt(attempts[0], cfg, entry)
 	if !isCandidate(first, cfg.Mode) {
 		return first
 	}
-	for _, a := range attempts[1:] {
-		if classifyAttempt(a, cfg) != first {
+	for _, attempt := range attempts[1:] {
+		if classifyAttempt(attempt, cfg, entry) != first {
 			return "FLAKY_FP"
 		}
 	}
 	return first
 }
-func confidenceFor(v string) string {
-	switch v {
+
+func confidenceFor(verdict string) string {
+	switch verdict {
 	case "CONFIRMED_FP":
 		return "high"
-	case "BLOCKED_BENIGN_CANDIDATE", "FLAKY_FP", "RESPONSE_DIFFERENCE":
+	case "LIKELY_FP":
 		return "medium"
+	case "BLOCKED_BENIGN_CANDIDATE", "FLAKY_FP", "RESPONSE_DIFFERENCE":
+		return "low"
 	case "AMBIGUOUS":
 		return "low"
 	default:
 		return "none"
 	}
 }
-func readPayloads(path string) ([]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	var out []string
-	s := bufio.NewScanner(f)
-	s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if line != "" && !strings.HasPrefix(line, "#") {
-			out = append(out, line)
-		}
-	}
-	if err := s.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, errors.New("payload file contains no usable payloads")
-	}
-	return out, nil
-}
+
 func validateConfig(cfg Config) error {
 	if cfg.Mode != "differential" && cfg.Mode != "waf-only" {
 		return errors.New("mode must be differential or waf-only")
@@ -374,9 +423,9 @@ func validateConfig(cfg Config) error {
 	if cfg.Rechecks < 0 || cfg.MaxBodyBytes <= 0 {
 		return errors.New("invalid execution limits")
 	}
-	for _, p := range cfg.BlockRegex {
-		if _, err := regexp.Compile(p); err != nil {
-			return fmt.Errorf("invalid block regex %q: %w", p, err)
+	for _, pattern := range cfg.BlockRegex {
+		if _, err := regexp.Compile(pattern); err != nil {
+			return fmt.Errorf("invalid block regex %q: %w", pattern, err)
 		}
 	}
 	return nil
