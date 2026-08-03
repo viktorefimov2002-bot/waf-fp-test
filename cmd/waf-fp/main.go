@@ -25,20 +25,19 @@ func main() {
 	flag.StringVar(&cli.OriginSNI, "origin-sni", "", "origin TLS SNI")
 	flag.StringVar(&cli.Path, "path", defaults.Path, "request path")
 	flag.StringVar(&cli.PayloadFile, "payloads", defaults.PayloadFile, "payload file or normalized JSONL corpus")
-	flag.BoolVar(&cli.RequestContextVerified, "request-context-verified", false, "mark the configured request context as manually validated")
 	flag.StringVar(&cli.OutputFile, "output", defaults.OutputFile, "JSONL output")
 	flag.StringVar(&cli.SummaryFile, "summary", defaults.SummaryFile, "Markdown summary")
 	flag.StringVar(&cli.BaselineFile, "baseline", "", "baseline JSONL")
 	flag.StringVar(&cli.ComparisonFile, "comparison", defaults.ComparisonFile, "comparison report")
-	flag.BoolVar(&cli.FailOnNewFP, "fail-on-new-fp", false, "exit 3 when comparison finds new FP")
+	flag.BoolVar(&cli.FailOnNewFP, "fail-on-new-fp", false, "exit 3 when comparison finds new confirmed FP")
 	flag.DurationVar(&cli.Timeout, "timeout", defaults.Timeout, "request timeout")
 	flag.IntVar(&cli.Rechecks, "rechecks", defaults.Rechecks, "candidate rechecks")
 	flag.Int64Var(&cli.MaxBodyBytes, "max-body-bytes", defaults.MaxBodyBytes, "response bytes to fingerprint")
 	flag.StringVar(&placements, "placements", "query,form,json,header,cookie,path", "payload placements")
 	flag.StringVar(&blockStatuses, "block-statuses", "403,406", "block statuses")
-	flag.StringVar(&blockSignatures, "block-body-contains", "", "body substrings")
-	flag.StringVar(&blockRegex, "block-body-regex", "", "body regex patterns")
-	flag.StringVar(&blockHeaders, "block-header-contains", "", "Header=substring indicators")
+	flag.StringVar(&blockSignatures, "block-body-contains", "", "optional body substrings")
+	flag.StringVar(&blockRegex, "block-body-regex", "", "optional body regex patterns")
+	flag.StringVar(&blockHeaders, "block-header-contains", "", "optional Header=substring indicators")
 	flag.Parse()
 
 	cfg := defaults
@@ -63,13 +62,13 @@ func main() {
 		fmt.Println("summary written to", cfg.SummaryFile)
 	}
 	if cfg.BaselineFile != "" {
-		cmp, err := report.WriteComparison(cfg.BaselineFile, cfg.OutputFile, cfg.ComparisonFile)
+		comparison, err := report.WriteComparison(cfg.BaselineFile, cfg.OutputFile, cfg.ComparisonFile)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "comparison failed:", err)
 			os.Exit(1)
 		}
 		fmt.Println("comparison written to", cfg.ComparisonFile)
-		if cfg.FailOnNewFP && cmp.NewFP > 0 { os.Exit(3) }
+		if cfg.FailOnNewFP && comparison.NewFP > 0 { os.Exit(3) }
 	}
 }
 
@@ -81,7 +80,6 @@ func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, status
 	if set["origin-sni"] { cfg.OriginSNI = cli.OriginSNI }
 	if set["path"] { cfg.Path = cli.Path }
 	if set["payloads"] { cfg.PayloadFile = cli.PayloadFile }
-	if set["request-context-verified"] { cfg.RequestContextVerified = cli.RequestContextVerified }
 	if set["output"] { cfg.OutputFile = cli.OutputFile }
 	if set["summary"] { cfg.SummaryFile = cli.SummaryFile }
 	if set["baseline"] { cfg.BaselineFile = cli.BaselineFile }
@@ -90,40 +88,40 @@ func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, status
 	if set["timeout"] { cfg.Timeout = cli.Timeout }
 	if set["rechecks"] { cfg.Rechecks = cli.Rechecks }
 	if set["max-body-bytes"] { cfg.MaxBodyBytes = cli.MaxBodyBytes }
-	if set["placements"] { p, e := runner.ParsePlacements(placements); if e != nil { return e }; cfg.Placements = p }
-	if set["block-statuses"] { s, e := parseStatuses(statuses); if e != nil { return e }; cfg.BlockStatuses = s }
+	if set["placements"] { parsed, err := runner.ParsePlacements(placements); if err != nil { return err }; cfg.Placements = parsed }
+	if set["block-statuses"] { parsed, err := parseStatuses(statuses); if err != nil { return err }; cfg.BlockStatuses = parsed }
 	if set["block-body-contains"] { cfg.BlockSignatures = parseStrings(signatures) }
 	if set["block-body-regex"] { cfg.BlockRegex = parseStrings(regexes) }
-	if set["block-header-contains"] { h, e := parseHeaderIndicators(parseStrings(headers)); if e != nil { return e }; cfg.BlockHeaders = h }
+	if set["block-header-contains"] { parsed, err := parseHeaderIndicators(parseStrings(headers)); if err != nil { return err }; cfg.BlockHeaders = parsed }
 	return nil
 }
 
-func parseStatuses(v string) (map[int]struct{}, error) {
-	out := map[int]struct{}{}
-	for _, x := range strings.Split(v, ",") {
-		n, err := strconv.Atoi(strings.TrimSpace(x))
-		if err != nil || n < 100 || n > 599 { return nil, fmt.Errorf("invalid HTTP status %q", x) }
-		out[n] = struct{}{}
+func parseStatuses(value string) (map[int]struct{}, error) {
+	result := map[int]struct{}{}
+	for _, item := range strings.Split(value, ",") {
+		status, err := strconv.Atoi(strings.TrimSpace(item))
+		if err != nil || status < 100 || status > 599 { return nil, fmt.Errorf("invalid HTTP status %q", item) }
+		result[status] = struct{}{}
 	}
-	return out, nil
+	return result, nil
 }
 
-func parseStrings(v string) []string {
-	var out []string
-	for _, x := range strings.Split(v, ",") {
-		if x = strings.TrimSpace(x); x != "" { out = append(out, x) }
+func parseStrings(value string) []string {
+	var result []string
+	for _, item := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" { result = append(result, trimmed) }
 	}
-	return out
+	return result
 }
 
 func parseHeaderIndicators(items []string) ([]runner.HeaderIndicator, error) {
-	var out []runner.HeaderIndicator
+	var result []runner.HeaderIndicator
 	for _, item := range items {
-		k, v, ok := strings.Cut(item, "=")
-		if !ok || strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" { return nil, fmt.Errorf("invalid header indicator %q", item) }
-		out = append(out, runner.HeaderIndicator{Header: strings.TrimSpace(k), Contains: strings.TrimSpace(v)})
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" { return nil, fmt.Errorf("invalid header indicator %q", item) }
+		result = append(result, runner.HeaderIndicator{Header: strings.TrimSpace(key), Contains: strings.TrimSpace(value)})
 	}
-	return out, nil
+	return result, nil
 }
 
 func exitConfig(err error) { fmt.Fprintln(os.Stderr, "configuration error:", err); os.Exit(2) }
