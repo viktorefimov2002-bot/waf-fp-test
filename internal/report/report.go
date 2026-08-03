@@ -25,39 +25,44 @@ type Comparison struct {
 }
 
 func Load(path string) ([]runner.Result, error) {
-	f, err := os.Open(path)
+	file, err := os.Open(path)
 	if err != nil { return nil, fmt.Errorf("open results: %w", err) }
-	defer f.Close()
+	defer file.Close()
 	var out []runner.Result
-	s := bufio.NewScanner(f)
-	s.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for s.Scan() {
-		var r runner.Result
-		if err := json.Unmarshal(s.Bytes(), &r); err != nil { return nil, fmt.Errorf("decode results: %w", err) }
-		out = append(out, r)
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		var result runner.Result
+		if err := json.Unmarshal(scanner.Bytes(), &result); err != nil { return nil, fmt.Errorf("decode results: %w", err) }
+		out = append(out, result)
 	}
-	if err := s.Err(); err != nil { return nil, err }
+	if err := scanner.Err(); err != nil { return nil, err }
 	return out, nil
 }
 
 func WriteSummary(resultsPath, outputPath string) (Summary, error) {
 	results, err := Load(resultsPath)
 	if err != nil { return Summary{}, err }
-	s := Summary{Total: len(results), ByVerdict: map[string]int{}, ByPlacement: map[string]int{}}
-	for _, r := range results { s.ByVerdict[r.Verdict]++; s.ByPlacement[string(r.Placement)]++ }
-	var b strings.Builder
-	fmt.Fprintf(&b, "# WAF FP summary\n\nTotal tests: **%d**\n\n## Verdicts\n\n", s.Total)
-	writeCounts(&b, s.ByVerdict)
-	b.WriteString("\n## Placements\n\n")
-	writeCounts(&b, s.ByPlacement)
-	b.WriteString("\n## Actionable results\n\n| Verdict | Payload ID | Legitimacy | Review | Placement | Method | Payload |\n|---|---|---|---|---|---|---|\n")
-	for _, r := range results {
-		if actionable(r.Verdict) {
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n", r.Verdict, escape(r.PayloadID), r.Legitimacy, r.ReviewStatus, r.Placement, r.Method, escape(r.Payload))
+	summary := Summary{Total: len(results), ByVerdict: map[string]int{}, ByPlacement: map[string]int{}}
+	for _, result := range results {
+		summary.ByVerdict[result.Verdict]++
+		summary.ByPlacement[string(result.Placement)]++
+	}
+	var body strings.Builder
+	fmt.Fprintf(&body, "# WAF FP summary\n\nTotal tests: **%d**\n\n## Verdicts\n\n", summary.Total)
+	writeCounts(&body, summary.ByVerdict)
+	body.WriteString("\n## Placements\n\n")
+	writeCounts(&body, summary.ByPlacement)
+	body.WriteString("\n## Post-run review queue\n\n")
+	body.WriteString("Only blocked, unstable, or route-different requests are listed here. Review these results after execution; the corpus does not require pre-approval.\n\n")
+	body.WriteString("| Verdict | Payload ID | Category | Source | Placement | Method | Payload |\n|---|---|---|---|---|---|---|\n")
+	for _, result := range results {
+		if actionable(result.Verdict) {
+			fmt.Fprintf(&body, "| %s | %s | %s | %s | %s | %s | %s |\n", result.Verdict, escape(result.PayloadID), escape(result.Category), escape(result.Source), result.Placement, result.Method, escape(result.Payload))
 		}
 	}
-	if err := os.WriteFile(outputPath, []byte(b.String()), 0o644); err != nil { return Summary{}, err }
-	return s, nil
+	if err := os.WriteFile(outputPath, []byte(body.String()), 0o644); err != nil { return Summary{}, err }
+	return summary, nil
 }
 
 func WriteComparison(baselinePath, currentPath, outputPath string) (Comparison, error) {
@@ -65,57 +70,64 @@ func WriteComparison(baselinePath, currentPath, outputPath string) (Comparison, 
 	if err != nil { return Comparison{}, err }
 	current, err := Load(currentPath)
 	if err != nil { return Comparison{}, err }
-	bmap := index(baseline)
-	cmap := index(current)
-	var c Comparison
+	baselineIndex := index(baseline)
+	currentIndex := index(current)
+	var comparison Comparison
 	var rows []string
-	for key, cur := range cmap {
-		old, ok := bmap[key]
+	for key, currentResult := range currentIndex {
+		old, existed := baselineIndex[key]
 		switch {
-		case isFP(cur.Verdict) && (!ok || !isFP(old.Verdict)):
-			c.NewFP++
-			rows = append(rows, row("NEW_FP", cur))
-		case isFP(cur.Verdict) && ok && isFP(old.Verdict):
-			c.UnchangedFP++
-			rows = append(rows, row("UNCHANGED_FP", cur))
-		case cur.Verdict == "RESPONSE_DIFFERENCE" && (!ok || old.Verdict != "RESPONSE_DIFFERENCE"):
-			c.NewResponseDifference++
-			rows = append(rows, row("NEW_RESPONSE_DIFFERENCE", cur))
+		case isConfirmedFP(currentResult.Verdict) && (!existed || !isConfirmedFP(old.Verdict)):
+			comparison.NewFP++
+			rows = append(rows, row("NEW_FP", currentResult))
+		case isConfirmedFP(currentResult.Verdict) && existed && isConfirmedFP(old.Verdict):
+			comparison.UnchangedFP++
+			rows = append(rows, row("UNCHANGED_FP", currentResult))
+		case currentResult.Verdict == "RESPONSE_DIFFERENCE" && (!existed || old.Verdict != "RESPONSE_DIFFERENCE"):
+			comparison.NewResponseDifference++
+			rows = append(rows, row("NEW_RESPONSE_DIFFERENCE", currentResult))
 		}
 	}
-	for key, old := range bmap {
-		if isFP(old.Verdict) {
-			if cur, ok := cmap[key]; !ok || !isFP(cur.Verdict) { c.FixedFP++; rows = append(rows, row("FIXED_FP", old)) }
+	for key, old := range baselineIndex {
+		if isConfirmedFP(old.Verdict) {
+			if currentResult, exists := currentIndex[key]; !exists || !isConfirmedFP(currentResult.Verdict) {
+				comparison.FixedFP++
+				rows = append(rows, row("FIXED_FP", old))
+			}
 		}
 	}
 	sort.Strings(rows)
-	var b strings.Builder
-	fmt.Fprintf(&b, "# WAF FP baseline comparison\n\n- New FP: **%d**\n- Fixed FP: **%d**\n- Unchanged FP: **%d**\n- New response differences: **%d**\n\n", c.NewFP, c.FixedFP, c.UnchangedFP, c.NewResponseDifference)
-	b.WriteString("| Change | Payload ID | Verdict | Placement | Method | Payload |\n|---|---|---|---|---|---|\n")
-	for _, r := range rows { b.WriteString(r) }
-	if err := os.WriteFile(outputPath, []byte(b.String()), 0o644); err != nil { return Comparison{}, err }
-	return c, nil
+	var body strings.Builder
+	fmt.Fprintf(&body, "# WAF FP baseline comparison\n\n- New confirmed FP: **%d**\n- Fixed confirmed FP: **%d**\n- Unchanged confirmed FP: **%d**\n- New response differences: **%d**\n\n", comparison.NewFP, comparison.FixedFP, comparison.UnchangedFP, comparison.NewResponseDifference)
+	body.WriteString("| Change | Payload ID | Verdict | Placement | Method | Payload |\n|---|---|---|---|---|---|\n")
+	for _, result := range rows { body.WriteString(result) }
+	if err := os.WriteFile(outputPath, []byte(body.String()), 0o644); err != nil { return Comparison{}, err }
+	return comparison, nil
 }
 
 func index(results []runner.Result) map[string]runner.Result {
 	out := map[string]runner.Result{}
-	for _, r := range results { out[key(r)] = r }
+	for _, result := range results { out[key(result)] = result }
 	return out
 }
 
-func key(r runner.Result) string {
-	identity := r.PayloadID
-	if identity == "" { identity = r.Payload }
-	return strings.Join([]string{r.Mode, string(r.Placement), r.Method, identity}, "\x00")
+func key(result runner.Result) string {
+	identity := result.PayloadID
+	if identity == "" { identity = result.Payload }
+	return strings.Join([]string{result.Mode, string(result.Placement), result.Method, identity}, "\x00")
 }
 
-func isFP(v string) bool { return v == "CONFIRMED_FP" || v == "LIKELY_FP" }
-func actionable(v string) bool { return isFP(v) || v == "BLOCKED_BENIGN_CANDIDATE" || v == "FLAKY_FP" || v == "RESPONSE_DIFFERENCE" }
-func row(change string, r runner.Result) string { return fmt.Sprintf("| %s | %s | %s | %s | %s | %s |\n", change, escape(r.PayloadID), r.Verdict, r.Placement, r.Method, escape(r.Payload)) }
-func escape(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, "|", "\\|"), "\n", " ") }
-func writeCounts(b *strings.Builder, m map[string]int) {
-	keys := make([]string, 0, len(m))
-	for k := range m { keys = append(keys, k) }
+func isConfirmedFP(verdict string) bool { return verdict == "CONFIRMED_FP" }
+func actionable(verdict string) bool {
+	return verdict == "CONFIRMED_FP" || verdict == "BLOCKED_BENIGN_CANDIDATE" || verdict == "FLAKY_FP" || verdict == "RESPONSE_DIFFERENCE" || verdict == "AMBIGUOUS"
+}
+func row(change string, result runner.Result) string {
+	return fmt.Sprintf("| %s | %s | %s | %s | %s | %s |\n", change, escape(result.PayloadID), result.Verdict, result.Placement, result.Method, escape(result.Payload))
+}
+func escape(value string) string { return strings.ReplaceAll(strings.ReplaceAll(value, "|", "\\|"), "\n", " ") }
+func writeCounts(body *strings.Builder, counts map[string]int) {
+	keys := make([]string, 0, len(counts))
+	for key := range counts { keys = append(keys, key) }
 	sort.Strings(keys)
-	for _, k := range keys { fmt.Fprintf(b, "- `%s`: %d\n", k, m[k]) }
+	for _, key := range keys { fmt.Fprintf(body, "- `%s`: %d\n", key, counts[key]) }
 }
