@@ -2,6 +2,76 @@
 
 `waf-fp-test` searches for WAF false positives by sending benign-oriented payload corpora through a WAF and, when possible, directly to the application origin.
 
+## What is a corpus?
+
+A corpus is the prepared set of values that the runner will place into query parameters, JSON, forms, headers, cookies, and paths.
+
+A plain text corpus can contain one payload per line:
+
+```text
+Select a delivery method
+The trade union published its annual report
+Use ../docs as the relative documentation path
+```
+
+The recommended normalized form is JSONL because every payload can also carry a stable ID and provenance:
+
+```json
+{"id":"corpus-6ab8c97eb91c52b4","value":"Select a delivery method","category":"sqli-like","source":"public-negative-tests","source_reference":"repository/path@version","tags":["business-text"]}
+```
+
+Only `id` and `value` are required by the runner. The other fields exist to make post-run analysis easier.
+
+## Importing external corpora
+
+Use `corpus-import` to convert external files into normalized JSONL:
+
+```bash
+go run ./cmd/corpus-import \
+  --input external-payloads.txt \
+  --output corpora/external.jsonl \
+  --source public-negative-tests \
+  --source-reference repository/path@version \
+  --category sqli-like \
+  --tags external,negative-test
+```
+
+Supported input formats:
+
+- TXT: one payload per non-empty, non-comment line;
+- CSV: first column by default, or a named column through `--value-field`;
+- JSON: array of strings or array of objects;
+- JSONL/NDJSON: strings or objects per line;
+- YAML: a simple scalar list where every payload line starts with `-`.
+
+Examples:
+
+```bash
+# CSV with a column named payload
+go run ./cmd/corpus-import \
+  --input input.csv \
+  --value-field payload \
+  --source vendor-dataset \
+  --output corpus.jsonl
+
+# JSON objects using a field named test_string
+go run ./cmd/corpus-import \
+  --input input.json \
+  --value-field test_string \
+  --source public-project \
+  --output corpus.jsonl
+```
+
+The importer:
+
+- removes empty values and comments from text inputs;
+- removes exact duplicates within the imported file;
+- generates deterministic IDs from `source + payload value`;
+- preserves source, source reference, category, and tags;
+- reports how many records were read, written, skipped, and deduplicated.
+
+It does not decide whether a payload is a real FP. It only prepares the input corpus. FP analysis happens after the runner sends the requests.
+
 ## Recommended run mode
 
 ```bash
@@ -93,8 +163,7 @@ Only `CONFIRMED_FP` is counted as an FP for baseline and CI failure purposes. `B
 
 ## Next milestones
 
-1. Add corpus import commands that normalize external sources and preserve provenance.
-2. Import selected public FP/negative-test corpora without requiring pre-run approval.
-3. Improve post-run triage with analyst disposition and notes for actionable results.
-4. Add application profiles and authentication support.
-5. Expand request structures: multipart, XML, GraphQL, nested JSON, repeated parameters, and encodings.
+1. Import selected public FP/negative-test corpora without requiring pre-run approval.
+2. Improve post-run triage with analyst disposition and notes for actionable results.
+3. Add application profiles and authentication support.
+4. Expand request structures: multipart, XML, GraphQL, nested JSON, repeated parameters, and encodings.
