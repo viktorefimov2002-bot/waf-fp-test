@@ -1,169 +1,221 @@
 # waf-fp-test
 
-`waf-fp-test` searches for WAF false positives by sending benign-oriented payload corpora through a WAF and, when possible, directly to the application origin.
+`waf-fp-test` sends false-positive payload corpora through a WAF and, when possible, directly to the application origin. The primary ready-made source is `mgm-sp/WAF-Payload-Collection`; the project collects its `nuclei/payloads/*/false-positives.txt` files automatically and does not generate new payloads.
 
-## What is a corpus?
+## Requirements
 
-A corpus is the prepared set of values that the runner will place into query parameters, JSON, forms, headers, cookies, and paths.
+- Go 1.23 or newer;
+- Git available in `PATH`;
+- network access to clone the public payload repository;
+- a WAF-protected test URL;
+- for high-confidence `CONFIRMED_FP` results, direct access to the same origin endpoint.
 
-A plain text corpus can contain one payload per line:
+## 1. Clone and check the project
+
+```bash
+git clone https://github.com/viktorefimov2002-bot/waf-fp-test.git
+cd waf-fp-test
+go test ./...
+go build ./cmd/waf-fp
+go build ./cmd/corpus-import
+go build ./cmd/corpus-sync-mgm
+```
+
+When working before PR #2 is merged, check out its branch:
+
+```bash
+git switch agent/reporting-baseline
+```
+
+## 2. Download and prepare the MGM FP corpora
+
+Run:
+
+```bash
+go run ./cmd/corpus-sync-mgm
+```
+
+The command:
+
+1. clones `https://github.com/mgm-sp/WAF-Payload-Collection.git` into `sources/WAF-Payload-Collection`, or fetches updates when the checkout already exists;
+2. recursively finds `nuclei/payloads/*/false-positives.txt`;
+3. treats each non-empty, non-comment line as one existing FP payload;
+4. derives the category from the parent directory, such as `cmdexe`, `sqli`, `xss`, or `traversal`;
+5. removes exact duplicates across the collected source files;
+6. creates stable IDs and preserves the source file path;
+7. writes a combined corpus and one corpus per category.
+
+Generated files:
 
 ```text
-Select a delivery method
-The trade union published its annual report
-Use ../docs as the relative documentation path
+corpora/mgm/
+├── all.jsonl
+├── cmdexe.jsonl
+├── sqli.jsonl
+├── xss.jsonl
+└── ...
 ```
 
-The recommended normalized form is JSONL because every payload can also carry a stable ID and provenance:
+A generated entry looks like:
 
 ```json
-{"id":"corpus-6ab8c97eb91c52b4","value":"Select a delivery method","category":"sqli-like","source":"public-negative-tests","source_reference":"repository/path@version","tags":["business-text"]}
+{"id":"mgm-cmdexe-...","value":"curl and divergence","category":"cmdexe","source":"mgm-sp/WAF-Payload-Collection","source_reference":"nuclei/payloads/cmdexe/false-positives.txt","tags":["false-positive","cmdexe"]}
 ```
 
-Only `id` and `value` are required by the runner. The other fields exist to make post-run analysis easier.
+No payload text is invented or modified beyond trimming surrounding whitespace.
 
-## Importing external corpora
+### Reproducible source version
 
-Use `corpus-import` to convert external files into normalized JSONL:
+Pin a tag, branch, or commit:
 
 ```bash
-go run ./cmd/corpus-import \
-  --input external-payloads.txt \
-  --output corpora/external.jsonl \
-  --source public-negative-tests \
-  --source-reference repository/path@version \
-  --category sqli-like \
-  --tags external,negative-test
+go run ./cmd/corpus-sync-mgm \
+  --revision eb606fd212c7a00edb95666e150c0044a217aa44
 ```
 
-Supported input formats:
-
-- TXT: one payload per non-empty, non-comment line;
-- CSV: first column by default, or a named column through `--value-field`;
-- JSON: array of strings or array of objects;
-- JSONL/NDJSON: strings or objects per line;
-- YAML: a simple scalar list where every payload line starts with `-`.
-
-Examples:
+Useful overrides:
 
 ```bash
-# CSV with a column named payload
-go run ./cmd/corpus-import \
-  --input input.csv \
-  --value-field payload \
-  --source vendor-dataset \
-  --output corpus.jsonl
-
-# JSON objects using a field named test_string
-go run ./cmd/corpus-import \
-  --input input.json \
-  --value-field test_string \
-  --source public-project \
-  --output corpus.jsonl
+go run ./cmd/corpus-sync-mgm \
+  --repository https://github.com/mgm-sp/WAF-Payload-Collection.git \
+  --work-dir sources/WAF-Payload-Collection \
+  --output-dir corpora/mgm
 ```
 
-The importer:
+## 3. Configure the WAF test
 
-- removes empty values and comments from text inputs;
-- removes exact duplicates within the imported file;
-- generates deterministic IDs from `source + payload value`;
-- preserves source, source reference, category, and tags;
-- reports how many records were read, written, skipped, and deduplicated.
-
-It does not decide whether a payload is a real FP. It only prepares the input corpus. FP analysis happens after the runner sends the requests.
-
-## Recommended run mode
+Create a working configuration:
 
 ```bash
 cp config.example.yaml config.yaml
-go run ./cmd/waf-fp --config config.yaml
 ```
 
-The recommended payload input is a normalized JSONL corpus:
-
-```json
-{"id":"benign-ui-0001","value":"Select a delivery method","category":"sqli-like","source":"external-corpus","source_reference":"dataset/item-42","description":"Ordinary UI phrase","tags":["business-text","sql-keyword"]}
-```
-
-Only `id` and `value` are required. `source`, `source_reference`, `category`, `description`, and `tags` are retained to make post-run analysis easier. Legacy text payload files remain supported.
-
-## Workflow
-
-The tool does not require manual approval of every payload before execution:
-
-```text
-external sources -> normalized corpus -> test run -> review only actionable results
-```
-
-The generated summary contains a post-run review queue with blocked, unstable, ambiguous, and route-different requests. Payloads that pass without interesting behavior do not require manual review.
-
-## Evidence model
-
-### Differential mode
-
-The same request is sent through the WAF route and directly to the origin. A reproducible block through the WAF route while the direct origin does not block the request is classified as `CONFIRMED_FP`.
-
-A `403` response alone does not identify which component generated it. If both routes appear blocked, the result is `AMBIGUOUS`.
-
-### WAF-only mode
-
-When direct-origin access is unavailable:
-
-- a reproducible configured block signal is `BLOCKED_BENIGN_CANDIDATE`;
-- no configured block signal is `NOT_BLOCKED`;
-- the result is reviewed after execution rather than pre-approved before the run.
-
-WAF-only results are useful for triage, but they are not counted as confirmed FP in baseline comparison because the response cannot be attributed to the WAF by route comparison.
-
-## Optional block indicators
-
-The project is product-neutral and does not assume vendor-specific headers or response markers.
+Use the generated combined corpus:
 
 ```yaml
+mode: differential
+
+target:
+  url: https://waf-test.example
+  path: /fp-test
+
+origin:
+  url: https://192.0.2.10:443
+  host: waf-test.example
+  sni: waf-test.example
+
+request:
+  payloads: corpora/mgm/all.jsonl
+  placements: [query, form, json, header, cookie, path]
+
 detection:
   block_statuses: [403, 406]
   block_body_contains: []
   block_body_regex: []
   block_header_contains: []
-```
 
-Body and header indicators are optional installation-specific signals. Configure them only when they are actually known for the tested environment.
+execution:
+  timeout: 10s
+  rechecks: 2
+  max_body_bytes: 1048576
 
-## Reports and baseline comparison
-
-```yaml
 output:
   file: results.jsonl
   summary: summary.md
-  baseline: baseline.jsonl
+  baseline: ""
   comparison: comparison.md
   fail_on_new_fp: false
 ```
 
-The summary groups all results by verdict and placement, then lists an actionable post-run review queue with payload provenance.
+Use a category corpus for a narrower run:
 
-Baseline comparison reports:
+```yaml
+request:
+  payloads: corpora/mgm/sqli.jsonl
+```
 
-- `NEW_FP`;
-- `FIXED_FP`;
-- `UNCHANGED_FP`;
-- `NEW_RESPONSE_DIFFERENCE`.
+## 4. Run the tests
 
-Only `CONFIRMED_FP` is counted as an FP for baseline and CI failure purposes. `BLOCKED_BENIGN_CANDIDATE` remains visible for post-run analysis but does not fail CI as a proven FP.
+```bash
+go run ./cmd/waf-fp --config config.yaml
+```
 
-## Current verdicts
+Each corpus value is tested in every configured placement. For example, six placements produce six requests per payload.
 
-- `CONFIRMED_FP`: direct origin does not block while the WAF route reproducibly blocks;
-- `BLOCKED_BENIGN_CANDIDATE`: reproducible block in WAF-only mode;
-- `FLAKY_FP`: candidate behavior was not reproduced consistently;
-- `RESPONSE_DIFFERENCE`: routes differ without a clear one-sided block;
+Outputs:
+
+- `results.jsonl`: complete machine-readable observations and verdicts;
+- `summary.md`: counts and the post-run review queue;
+- `comparison.md`: changes against a baseline, when configured.
+
+## 5. Interpret the verdicts
+
+### Differential mode
+
+The same request is sent through the WAF and directly to the origin.
+
+- `CONFIRMED_FP`: WAF route reproducibly blocks while the direct-origin route does not;
 - `AMBIGUOUS`: both routes appear blocked;
-- `NOT_FP` / `NOT_BLOCKED`;
-- `WAF_ERROR` / `ORIGIN_ERROR`.
+- `RESPONSE_DIFFERENCE`: routes differ without a clear one-sided block;
+- `NOT_FP`: no FP evidence was observed;
+- `WAF_ERROR` / `ORIGIN_ERROR`: execution problem.
 
-## Next milestones
+### WAF-only mode
 
-1. Import selected public FP/negative-test corpora without requiring pre-run approval.
-2. Improve post-run triage with analyst disposition and notes for actionable results.
-3. Add application profiles and authentication support.
-4. Expand request structures: multipart, XML, GraphQL, nested JSON, repeated parameters, and encodings.
+Use this only when direct-origin access is unavailable:
+
+```yaml
+mode: waf-only
+```
+
+- `BLOCKED_BENIGN_CANDIDATE`: a configured block signal was reproduced;
+- `NOT_BLOCKED`: no configured block signal was observed.
+
+A WAF-only block is placed in the review queue but is not counted as a confirmed FP because a status such as `403` does not identify which component generated it.
+
+## 6. Baseline comparison
+
+After accepting a run as a baseline:
+
+```bash
+cp results.jsonl baseline.jsonl
+```
+
+Configure the next run:
+
+```yaml
+output:
+  baseline: baseline.jsonl
+  comparison: comparison.md
+  fail_on_new_fp: true
+```
+
+The comparison reports `NEW_FP`, `FIXED_FP`, `UNCHANGED_FP`, and `NEW_RESPONSE_DIFFERENCE`. Only `CONFIRMED_FP` counts as an FP for CI failure purposes.
+
+## Importing other or custom files
+
+The generic importer remains available for existing TXT, CSV, JSON, JSONL, and simple YAML lists:
+
+```bash
+go run ./cmd/corpus-import \
+  --input my-existing-fp.txt \
+  --output corpora/custom.jsonl \
+  --source internal \
+  --category custom
+```
+
+This is an optional extension. The default initial workflow uses only the existing MGM payload files.
+
+## Current limitations and remaining work
+
+The project is usable for an initial black-box run, but it is not feature-complete:
+
+1. Request construction currently uses a generic endpoint and parameter name (`fp_param`); application-specific request profiles are not implemented.
+2. Authentication, session bootstrap, custom headers, and CSRF token handling are not implemented.
+3. Placements are basic: query, form, flat JSON, one header, one cookie, and path. Multipart, XML, GraphQL, nested JSON, arrays, repeated parameters, and encoding matrices remain to be added.
+4. A control request that validates each endpoint/method before the corpus run is not automated yet.
+5. Post-run analyst dispositions such as confirmed, rejected, application block, and notes are not persisted yet.
+6. Source updates are fetched from the external repository, but the generated corpus itself is not automatically committed or versioned.
+7. End-to-end integration tests against a controlled echo origin and a real WAF test deployment are still required.
+
+The recommended next stage is to add request/application profiles and an automated control request, then execute the first real MGM corpus run against the test WAF.
