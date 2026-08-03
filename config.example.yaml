@@ -10,7 +10,8 @@ origin:
   sni: app.example.test
 
 request:
-  payloads: examples/payloads.txt
+  payloads: examples/corpus.jsonl
+  context_verified: false
   placements: [query, form, json, header, cookie, path]
 
 detection:
