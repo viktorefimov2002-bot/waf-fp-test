@@ -13,8 +13,13 @@ import (
 )
 
 func Default() runner.Config {
-	p, _ := runner.ParsePlacements("query,form,json,header,cookie,path")
-	return runner.Config{Mode: "differential", Path: "/", PayloadFile: "examples/corpus.jsonl", OutputFile: "results.jsonl", SummaryFile: "summary.md", ComparisonFile: "comparison.md", Timeout: 10 * time.Second, Rechecks: 2, MaxBodyBytes: 1048576, BlockStatuses: map[int]struct{}{403: {}, 406: {}}, Placements: p}
+	placements, _ := runner.ParsePlacements("query,form,json,header,cookie,path")
+	return runner.Config{
+		Mode: "differential", Path: "/", PayloadFile: "examples/corpus.jsonl",
+		OutputFile: "results.jsonl", SummaryFile: "summary.md", ComparisonFile: "comparison.md",
+		Timeout: 10 * time.Second, Rechecks: 2, MaxBodyBytes: 1048576,
+		BlockStatuses: map[int]struct{}{403: {}, 406: {}}, Placements: placements,
+	}
 }
 
 func Load(path string) (runner.Config, error) {
@@ -31,12 +36,23 @@ func Load(path string) (runner.Config, error) {
 		"origin.host": func(v string) error { cfg.OriginHost = v; return nil },
 		"origin.sni": func(v string) error { cfg.OriginSNI = v; return nil },
 		"request.payloads": func(v string) error { cfg.PayloadFile = v; return nil },
-		"request.context_verified": func(v string) error { b, e := strconv.ParseBool(v); cfg.RequestContextVerified = b; return e },
-		"request.placements": func(v string) error { p, e := runner.ParsePlacements(strings.Join(parseList(v), ",")); cfg.Placements = p; return e },
-		"detection.block_statuses": func(v string) error { s, e := parseStatuses(parseList(v)); cfg.BlockStatuses = s; return e },
+		"request.placements": func(v string) error {
+			placements, e := runner.ParsePlacements(strings.Join(parseList(v), ","))
+			cfg.Placements = placements
+			return e
+		},
+		"detection.block_statuses": func(v string) error {
+			statuses, e := parseStatuses(parseList(v))
+			cfg.BlockStatuses = statuses
+			return e
+		},
 		"detection.block_body_contains": func(v string) error { cfg.BlockSignatures = parseList(v); return nil },
 		"detection.block_body_regex": func(v string) error { cfg.BlockRegex = parseList(v); return nil },
-		"detection.block_header_contains": func(v string) error { h, e := parseHeaders(parseList(v)); cfg.BlockHeaders = h; return e },
+		"detection.block_header_contains": func(v string) error {
+			headers, e := parseHeaders(parseList(v))
+			cfg.BlockHeaders = headers
+			return e
+		},
 		"execution.timeout": func(v string) error { d, e := time.ParseDuration(v); cfg.Timeout = d; return e },
 		"execution.rechecks": func(v string) error { n, e := strconv.Atoi(v); cfg.Rechecks = n; return e },
 		"execution.max_body_bytes": func(v string) error { n, e := strconv.ParseInt(v, 10, 64); cfg.MaxBodyBytes = n; return e },
@@ -46,13 +62,13 @@ func Load(path string) (runner.Config, error) {
 		"output.comparison": func(v string) error { cfg.ComparisonFile = v; return nil },
 		"output.fail_on_new_fp": func(v string) error { b, e := strconv.ParseBool(v); cfg.FailOnNewFP = b; return e },
 	}
-	for k, v := range values {
-		set, ok := known[k]
+	for key, value := range values {
+		setter, ok := known[key]
 		if !ok {
-			return runner.Config{}, fmt.Errorf("config: unsupported key %q", k)
+			return runner.Config{}, fmt.Errorf("config: unsupported key %q", key)
 		}
-		if err := set(v); err != nil {
-			return runner.Config{}, fmt.Errorf("config %s: %w", k, err)
+		if err := setter(value); err != nil {
+			return runner.Config{}, fmt.Errorf("config %s: %w", key, err)
 		}
 	}
 	return cfg, nil
@@ -61,56 +77,56 @@ func Load(path string) (runner.Config, error) {
 func parseHeaders(items []string) ([]runner.HeaderIndicator, error) {
 	var out []runner.HeaderIndicator
 	for _, item := range items {
-		k, v, ok := strings.Cut(item, "=")
-		if !ok || strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
 			return nil, fmt.Errorf("invalid header indicator %q, expected Header=substring", item)
 		}
-		out = append(out, runner.HeaderIndicator{Header: strings.TrimSpace(k), Contains: strings.TrimSpace(v)})
+		out = append(out, runner.HeaderIndicator{Header: strings.TrimSpace(key), Contains: strings.TrimSpace(value)})
 	}
 	return out, nil
 }
 
 func parseFile(path string) (map[string]string, error) {
-	f, err := os.Open(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open config: %w", err)
 	}
-	defer f.Close()
+	defer file.Close()
 	values := map[string]string{}
 	section := ""
-	s := bufio.NewScanner(f)
-	for line := 1; s.Scan(); line++ {
-		raw := s.Text()
-		trim := strings.TrimSpace(raw)
-		if trim == "" || strings.HasPrefix(trim, "#") {
+	scanner := bufio.NewScanner(file)
+	for line := 1; scanner.Scan(); line++ {
+		raw := scanner.Text()
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
-		k, v, ok := strings.Cut(trim, ":")
+		key, value, ok := strings.Cut(trimmed, ":")
 		if !ok {
 			return nil, fmt.Errorf("config line %d: expected key: value", line)
 		}
-		k = strings.TrimSpace(k)
-		v = stripComment(strings.TrimSpace(v))
-		if v == "" {
+		key = strings.TrimSpace(key)
+		value = stripComment(strings.TrimSpace(value))
+		if value == "" {
 			if indent != 0 {
 				return nil, fmt.Errorf("config line %d: nested sections are not supported", line)
 			}
-			section = k
+			section = key
 			continue
 		}
-		full := k
+		fullKey := key
 		if indent > 0 {
 			if section == "" {
 				return nil, fmt.Errorf("config line %d: value has no section", line)
 			}
-			full = section + "." + k
+			fullKey = section + "." + key
 		} else {
 			section = ""
 		}
-		values[full] = unquote(v)
+		values[fullKey] = unquote(value)
 	}
-	if err := s.Err(); err != nil {
+	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 	if len(values) == 0 {
@@ -119,19 +135,19 @@ func parseFile(path string) (map[string]string, error) {
 	return values, nil
 }
 
-func parseList(v string) []string {
-	v = strings.TrimSpace(v)
-	if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
-		v = strings.TrimSpace(v[1 : len(v)-1])
+func parseList(value string) []string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		value = strings.TrimSpace(value[1 : len(value)-1])
 	}
-	if v == "" {
+	if value == "" {
 		return nil
 	}
-	parts := strings.Split(v, ",")
+	parts := strings.Split(value, ",")
 	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if x := unquote(strings.TrimSpace(p)); x != "" {
-			out = append(out, x)
+	for _, part := range parts {
+		if item := unquote(strings.TrimSpace(part)); item != "" {
+			out = append(out, item)
 		}
 	}
 	return out
@@ -139,12 +155,12 @@ func parseList(v string) []string {
 
 func parseStatuses(items []string) (map[int]struct{}, error) {
 	out := map[int]struct{}{}
-	for _, x := range items {
-		n, err := strconv.Atoi(x)
-		if err != nil || n < 100 || n > 599 {
-			return nil, fmt.Errorf("invalid HTTP status %q", x)
+	for _, item := range items {
+		status, err := strconv.Atoi(item)
+		if err != nil || status < 100 || status > 599 {
+			return nil, fmt.Errorf("invalid HTTP status %q", item)
 		}
-		out[n] = struct{}{}
+		out[status] = struct{}{}
 	}
 	if len(out) == 0 {
 		return nil, errors.New("at least one block status is required")
@@ -152,24 +168,24 @@ func parseStatuses(items []string) (map[int]struct{}, error) {
 	return out, nil
 }
 
-func stripComment(v string) string {
-	single, double := false, false
-	for i, r := range v {
+func stripComment(value string) string {
+	inSingle, inDouble := false, false
+	for i, r := range value {
 		switch r {
 		case '\'':
-			if !double { single = !single }
+			if !inDouble { inSingle = !inSingle }
 		case '"':
-			if !single { double = !double }
+			if !inSingle { inDouble = !inDouble }
 		case '#':
-			if !single && !double { return strings.TrimSpace(v[:i]) }
+			if !inSingle && !inDouble { return strings.TrimSpace(value[:i]) }
 		}
 	}
-	return strings.TrimSpace(v)
+	return strings.TrimSpace(value)
 }
 
-func unquote(v string) string {
-	if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
-		return v[1 : len(v)-1]
+func unquote(value string) string {
+	if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
+		return value[1 : len(value)-1]
 	}
-	return v
+	return value
 }
