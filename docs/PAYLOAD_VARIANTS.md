@@ -1,95 +1,83 @@
-# Payload representation variants
+# Normalization diagnostics
 
-The corpus remains the source of the original benign payloads. Variants do not invent new semantic payloads; they create deterministic representations of each existing value before it is inserted into a request.
+Payload variants are not part of the standard false-positive methodology.
 
-## Configuration
+The standard command `cmd/waf-fp` always tests the original semantic value from the benign corpus. Each placement still performs the transport serialization required by HTTP: query and form encoding, JSON escaping, safe cookie representation, and path serialization. Those transport details do not create a new semantic payload.
 
-The previous behavior is preserved by default:
+Use variants only after a false positive has already been found and you need to understand whether normalization or a Seclang transformation chain affects the match.
+
+## Standard FP run
 
 ```yaml
 payload_variants:
   transforms: [raw]
 ```
 
-A broader first pass can be enabled explicitly:
+Run with:
 
-```yaml
-payload_variants:
-  transforms: [raw, url, double-url, base64, base64url, html, unicode]
+```bash
+go run ./cmd/waf-fp --config config.yaml
 ```
 
-Case and whitespace variants are more semantic and should normally be enabled separately:
+`cmd/waf-fp` rejects configurations containing non-raw variants. This prevents normalization experiments from being mixed into the normal FP baseline.
 
-```yaml
-payload_variants:
-  transforms: [raw, lower, upper, space-plus]
+## Separate normalization lab
+
+Use the dedicated command:
+
+```bash
+go run ./cmd/waf-normalization-test \
+  --config examples/config.normalization-lab.yaml
 ```
+
+The diagnostic command requires `raw` plus at least one transformed variant and refuses baseline comparison or `fail_on_new_fp`.
+
+A normalization run should normally use:
+
+- a small corpus containing selected confirmed FP values;
+- one relevant endpoint/profile;
+- one or a small number of placements;
+- no baseline comparison;
+- a separate output such as `normalization-results.jsonl`.
 
 ## Supported transformations
 
 - `raw`: original corpus value;
-- `url`: Go query escaping of the value, for example `A B&` becomes `A+B%26`;
-- `double-url`: applies the same URL escaping twice;
+- `url`: query escaping of the semantic value;
+- `double-url`: URL escaping applied twice;
 - `base64`: standard Base64 with padding;
 - `base64url`: URL-safe Base64 without padding;
-- `html`: HTML entity escaping such as `<` to `&lt;`;
+- `html`: HTML entity escaping;
 - `unicode`: non-ASCII/control runes represented with `\\uXXXX` sequences;
-- `lower`: Unicode-aware lower-case conversion;
-- `upper`: Unicode-aware upper-case conversion;
-- `space-plus`: replaces literal spaces with `+` without changing other bytes.
+- `lower`: Unicode-aware lowercase conversion;
+- `upper`: Unicode-aware uppercase conversion;
+- `space-plus`: replaces literal spaces with `+`.
 
-## Important transport distinction
+These transformations answer a diagnostic question: whether different normalized representations activate the same or different WAF behavior. They do not by themselves prove a false positive and should not be used to generate exclusion recommendations without reviewing the actual rule, target, and transformation chain.
 
-A variant is produced before placement serialization. The HTTP placement may add its own encoding afterwards.
+## Relationship to Seclang
 
-For example, the variant:
+For a Seclang rule, the operator or regular expression normally evaluates the value after the configured `t:` transformations. The same regex can therefore match plain and encoded input when the transformation chain normalizes both to the same value.
+
+The useful FP workflow is:
 
 ```text
-url value: A+B%26
+confirmed raw FP
+-> obtain Rule ID or rule text when possible
+-> inspect targets, operator and t: transformations
+-> reproduce the transformation locally or with the normalization lab
+-> prepare a narrow target/endpoint exclusion or rule correction
 ```
 
-inserted into a query parameter is serialized by the HTTP client as a parameter value, so the percent sign itself is escaped on the wire. This intentionally exercises a second decoding layer. The result records both:
+The lab exists only for the third and fourth steps. It is not a general request-fuzzing stage.
 
-- `payload`: original corpus value;
+## Result fields
+
+Diagnostic results retain:
+
+- `payload`: original benign corpus value;
 - `variant`: transformation name;
-- `variant_value`: transformed representation supplied to the request builder;
-- `wire_value`: representation used by the placement implementation (cookie additionally percent-encodes invalid cookie octets).
+- `variant_value`: transformed value supplied to the request builder;
+- `wire_value`: value used by the placement implementation.
 
-A future raw-wire request mode may provide byte-exact control over complete query strings and request bodies. The current variant stage deliberately remains safe and standards-compliant for Go `net/http`.
-
-## Test count
-
-The number of primary tests is approximately:
-
-```text
-corpus entries × distinct generated variants × request cases
-```
-
-Equivalent values are de-duplicated per payload. For example, `lower` produces the same value as `raw` for an already lower-case string, so it does not create a duplicate test.
-
-Rechecks and optional control requests add extra HTTP requests but do not create extra result records.
-
-## Recommended presets
-
-Minimal regression:
-
-```yaml
-payload_variants:
-  transforms: [raw]
-```
-
-Encoding-focused run:
-
-```yaml
-payload_variants:
-  transforms: [raw, url, double-url, base64, base64url, html, unicode]
-```
-
-Text-normalization run:
-
-```yaml
-payload_variants:
-  transforms: [raw, lower, upper, space-plus]
-```
-
-Do not enable every transformation automatically for large corpora without considering runtime. With 112 payloads, six generic placements, and seven distinct variants, the upper bound is 4,704 result records before per-payload de-duplication.
+Keep normalization outputs separate from `results.jsonl` and from the standard FP baseline.
