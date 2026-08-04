@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/viktorefimov2002-bot/waf-fp-test/internal/corpus"
+	"github.com/viktorefimov2002-bot/waf-fp-test/internal/payloadvariant"
 	"github.com/viktorefimov2002-bot/waf-fp-test/internal/requestprofile"
 )
 
@@ -40,6 +41,7 @@ type Config struct {
 	Mode string
 	RequestMode string
 	ProfilesFile string
+	Variants []string
 	WAFBaseURL string
 	OriginBaseURL string
 	OriginHost string
@@ -78,13 +80,14 @@ type Observation struct {
 }
 
 type Attempt struct { Number int `json:"number"`; WAF Observation `json:"waf"`; Origin *Observation `json:"origin,omitempty"` }
-
 type ControlResult struct { Enabled bool `json:"enabled"`; Value string `json:"value,omitempty"`; WAF Observation `json:"waf"`; Origin *Observation `json:"origin,omitempty"`; ContextValidated bool `json:"context_validated"` }
 
 type Result struct {
 	TestID string `json:"test_id"`
 	PayloadID string `json:"payload_id"`
 	Payload string `json:"payload"`
+	Variant string `json:"variant"`
+	VariantValue string `json:"variant_value"`
 	Category string `json:"category,omitempty"`
 	Source string `json:"source,omitempty"`
 	SourceReference string `json:"source_reference,omitempty"`
@@ -113,10 +116,17 @@ func Run(ctx context.Context,cfg Config) error {
 	cases,err:=buildCases(cfg); if err!=nil{return err}
 	out,err:=os.Create(cfg.OutputFile); if err!=nil{return fmt.Errorf("create output: %w",err)}; defer out.Close()
 	wafClient:=newClient(cfg.Timeout,""); originClient:=newClient(cfg.Timeout,cfg.OriginSNI); enc:=json.NewEncoder(out); sequence:=0
-	for _,entry:=range entries { for _,rc:=range cases { sequence++; testID:=fmt.Sprintf("waf-fp-%d-%06d",time.Now().UnixNano(),sequence); attempts:=[]Attempt{runAttempt(ctx,wafClient,originClient,cfg,rc,entry.Value,testID,1)}; if isCandidate(classifyAttempt(attempts[0],cfg),cfg.Mode){for n:=0;n<cfg.Rechecks;n++{attempts=append(attempts,runAttempt(ctx,wafClient,originClient,cfg,rc,entry.Value,testID,n+2))}}
-		verdict:=classifyResult(attempts,cfg); control:=runControl(ctx,wafClient,originClient,cfg,rc,testID); wire:=wireValue(rc.Placement,entry.Value)
-		result:=Result{TestID:testID,PayloadID:entry.ID,Payload:entry.Value,Category:entry.Category,Source:entry.Source,SourceReference:entry.SourceReference,Profile:rc.Profile,RequestPath:rc.Path,RequestField:rc.Field,Placement:rc.Placement,Method:rc.Method,Mode:cfg.Mode,RequestMode:cfg.RequestMode,WireValue:wire,Control:control,Attempts:attempts,Verdict:verdict,Confidence:confidenceFor(verdict),ExecutedAt:time.Now().UTC()}
-		if err:=enc.Encode(result);err!=nil{return fmt.Errorf("write result: %w",err)} }}
+	for _,entry:=range entries {
+		variants,err:=payloadvariant.Apply(entry.Value,cfg.Variants);if err!=nil{return fmt.Errorf("payload %s variants: %w",entry.ID,err)}
+		for _,variant:=range variants { for _,rc:=range cases {
+			sequence++; testID:=fmt.Sprintf("waf-fp-%d-%06d",time.Now().UnixNano(),sequence)
+			attempts:=[]Attempt{runAttempt(ctx,wafClient,originClient,cfg,rc,variant.Value,testID,1)}
+			if isCandidate(classifyAttempt(attempts[0],cfg),cfg.Mode){for n:=0;n<cfg.Rechecks;n++{attempts=append(attempts,runAttempt(ctx,wafClient,originClient,cfg,rc,variant.Value,testID,n+2))}}
+			verdict:=classifyResult(attempts,cfg); control:=runControl(ctx,wafClient,originClient,cfg,rc,testID); wire:=wireValue(rc.Placement,variant.Value)
+			result:=Result{TestID:testID,PayloadID:entry.ID,Payload:entry.Value,Variant:variant.Name,VariantValue:variant.Value,Category:entry.Category,Source:entry.Source,SourceReference:entry.SourceReference,Profile:rc.Profile,RequestPath:rc.Path,RequestField:rc.Field,Placement:rc.Placement,Method:rc.Method,Mode:cfg.Mode,RequestMode:cfg.RequestMode,WireValue:wire,Control:control,Attempts:attempts,Verdict:verdict,Confidence:confidenceFor(verdict),ExecutedAt:time.Now().UTC()}
+			if err:=enc.Encode(result);err!=nil{return fmt.Errorf("write result: %w",err)}
+		}}
+	}
 	return nil
 }
 
@@ -131,7 +141,7 @@ func runControl(ctx context.Context,wafClient,originClient *http.Client,cfg Conf
 
 func newClient(timeout time.Duration,serverName string)*http.Client{t:=http.DefaultTransport.(*http.Transport).Clone();if serverName!=""{t.TLSClientConfig=&tls.Config{ServerName:serverName,MinVersion:tls.VersionTLS12}};return &http.Client{Timeout:timeout,Transport:t}}
 func runAttempt(ctx context.Context,wafClient,originClient *http.Client,cfg Config,rc requestCase,payload,testID string,number int)Attempt{a:=Attempt{Number:number};a.WAF=execute(ctx,wafClient,cfg.WAFBaseURL,rc,payload,testID,"",cfg);if cfg.Mode=="differential"{o:=execute(ctx,originClient,cfg.OriginBaseURL,rc,payload,testID,cfg.OriginHost,cfg);a.Origin=&o};return a}
-func execute(ctx context.Context,client *http.Client,baseURL string,rc requestCase,payload,testID,hostOverride string,cfg Config)Observation{started:=time.Now();req,err:=buildRequest(ctx,baseURL,rc,payload,hostOverride);if err!=nil{return Observation{Duration:time.Since(started),Error:err.Error()}};req.Header.Set("User-Agent","waf-fp-test/0.8");req.Header.Set("X-WAF-FP-Test-ID",testID);resp,err:=client.Do(req);if err!=nil{return Observation{Duration:time.Since(started),Error:err.Error()}};defer resp.Body.Close();body,err:=io.ReadAll(io.LimitReader(resp.Body,cfg.MaxBodyBytes));if err!=nil{return Observation{StatusCode:resp.StatusCode,Duration:time.Since(started),Error:err.Error()}};sum:=sha256.Sum256(body);return Observation{StatusCode:resp.StatusCode,Duration:time.Since(started),BodyBytes:int64(len(body)),BodySHA256:hex.EncodeToString(sum[:]),ContentType:resp.Header.Get("Content-Type"),Server:resp.Header.Get("Server"),Location:resp.Header.Get("Location"),MatchedBlockSignature:matchSignature(body,cfg.BlockSignatures),MatchedBlockRegex:matchRegex(body,cfg.BlockRegex),MatchedBlockHeader:matchHeader(resp.Header,cfg.BlockHeaders)}}
+func execute(ctx context.Context,client *http.Client,baseURL string,rc requestCase,payload,testID,hostOverride string,cfg Config)Observation{started:=time.Now();req,err:=buildRequest(ctx,baseURL,rc,payload,hostOverride);if err!=nil{return Observation{Duration:time.Since(started),Error:err.Error()}};req.Header.Set("User-Agent","waf-fp-test/0.9");req.Header.Set("X-WAF-FP-Test-ID",testID);resp,err:=client.Do(req);if err!=nil{return Observation{Duration:time.Since(started),Error:err.Error()}};defer resp.Body.Close();body,err:=io.ReadAll(io.LimitReader(resp.Body,cfg.MaxBodyBytes));if err!=nil{return Observation{StatusCode:resp.StatusCode,Duration:time.Since(started),Error:err.Error()}};sum:=sha256.Sum256(body);return Observation{StatusCode:resp.StatusCode,Duration:time.Since(started),BodyBytes:int64(len(body)),BodySHA256:hex.EncodeToString(sum[:]),ContentType:resp.Header.Get("Content-Type"),Server:resp.Header.Get("Server"),Location:resp.Header.Get("Location"),MatchedBlockSignature:matchSignature(body,cfg.BlockSignatures),MatchedBlockRegex:matchRegex(body,cfg.BlockRegex),MatchedBlockHeader:matchHeader(resp.Header,cfg.BlockHeaders)}}
 
 func buildRequest(ctx context.Context,baseURL string,rc requestCase,payload,hostOverride string)(*http.Request,error){target,err:=buildBaseURL(baseURL,rc.Path);if err!=nil{return nil,err};var body io.Reader;field:=rc.Field;if field==""{field=defaultField(rc.Placement)};switch rc.Placement{case PlacementQuery:q:=target.Query();q.Set(field,payload);target.RawQuery=q.Encode();case PlacementForm:body=strings.NewReader(url.Values{field:{payload}}.Encode());case PlacementJSON:b,e:=json.Marshal(map[string]string{field:payload});if e!=nil{return nil,e};body=bytes.NewReader(b);case PlacementPath:target.Path=strings.TrimRight(target.Path,"/")+"/"+payload}
 	req,err:=http.NewRequestWithContext(ctx,rc.Method,target.String(),body);if err!=nil{return nil,err};if hostOverride!=""{req.Host=hostOverride};for k,v:=range rc.Headers{req.Header.Set(k,v)};switch rc.Placement{case PlacementForm:req.Header.Set("Content-Type","application/x-www-form-urlencoded");case PlacementJSON:req.Header.Set("Content-Type","application/json");case PlacementHeader:h:=rc.Header;if h==""{h=field};req.Header.Set(h,payload);case PlacementCookie:req.Header.Set("Cookie",field+"="+encodeCookieValue(payload))};return req,nil}
@@ -151,4 +161,4 @@ func responsesDiffer(a,b Observation)bool{return a.StatusCode!=b.StatusCode||a.B
 func isCandidate(v,mode string)bool{return v=="CONFIRMED_FP"||(mode=="waf-only"&&v=="BLOCKED_BENIGN_CANDIDATE")}
 func classifyResult(a []Attempt,cfg Config)string{f:=classifyAttempt(a[0],cfg);if !isCandidate(f,cfg.Mode){return f};for _,x:=range a[1:]{if classifyAttempt(x,cfg)!=f{return "FLAKY_FP"}};return f}
 func confidenceFor(v string)string{switch v{case "CONFIRMED_FP":return "high";case "BLOCKED_BENIGN_CANDIDATE","FLAKY_FP","RESPONSE_DIFFERENCE":return "medium";case "AMBIGUOUS":return "low";default:return "none"}}
-func validateConfig(cfg Config)error{if cfg.Mode!="differential"&&cfg.Mode!="waf-only"{return errors.New("mode must be differential or waf-only")};if cfg.RequestMode==""{cfg.RequestMode="generic"};if cfg.RequestMode!="generic"&&cfg.RequestMode!="profiles"&&cfg.RequestMode!="both"{return errors.New("request mode must be generic, profiles, or both")};if (cfg.RequestMode=="profiles"||cfg.RequestMode=="both")&&cfg.ProfilesFile==""{return errors.New("profiles file is required for profiles or both request mode")};if cfg.WAFBaseURL==""{return errors.New("WAF target URL is required")};if cfg.Mode=="differential"&&cfg.OriginBaseURL==""{return errors.New("origin URL is required in differential mode")};if cfg.PayloadFile==""||cfg.OutputFile==""{return errors.New("payload and output files are required")};if len(cfg.BlockStatuses)==0{return errors.New("block statuses are required")};if (cfg.RequestMode=="generic"||cfg.RequestMode=="both")&&len(cfg.Placements)==0{return errors.New("generic placements are required")};if cfg.Rechecks<0||cfg.MaxBodyBytes<=0{return errors.New("invalid execution limits")};for _,p:=range cfg.BlockRegex{if _,err:=regexp.Compile(p);err!=nil{return fmt.Errorf("invalid block regex %q: %w",p,err)}};return nil}
+func validateConfig(cfg Config)error{if cfg.Mode!="differential"&&cfg.Mode!="waf-only"{return errors.New("mode must be differential or waf-only")};if cfg.RequestMode==""{cfg.RequestMode="generic"};if cfg.RequestMode!="generic"&&cfg.RequestMode!="profiles"&&cfg.RequestMode!="both"{return errors.New("request mode must be generic, profiles, or both")};if (cfg.RequestMode=="profiles"||cfg.RequestMode=="both")&&cfg.ProfilesFile==""{return errors.New("profiles file is required for profiles or both request mode")};if _,err:=payloadvariant.Parse(cfg.Variants);err!=nil{return err};if cfg.WAFBaseURL==""{return errors.New("WAF target URL is required")};if cfg.Mode=="differential"&&cfg.OriginBaseURL==""{return errors.New("origin URL is required in differential mode")};if cfg.PayloadFile==""||cfg.OutputFile==""{return errors.New("payload and output files are required")};if len(cfg.BlockStatuses)==0{return errors.New("block statuses are required")};if (cfg.RequestMode=="generic"||cfg.RequestMode=="both")&&len(cfg.Placements)==0{return errors.New("generic placements are required")};if cfg.Rechecks<0||cfg.MaxBodyBytes<=0{return errors.New("invalid execution limits")};for _,p:=range cfg.BlockRegex{if _,err:=regexp.Compile(p);err!=nil{return fmt.Errorf("invalid block regex %q: %w",p,err)}};return nil}
