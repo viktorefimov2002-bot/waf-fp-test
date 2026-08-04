@@ -119,7 +119,7 @@ func loadAnnotations(path string) ([]*compiled, error) {
 			return nil, fmt.Errorf("annotation line %d: test_id or payload_id is required", line)
 		}
 		if annotation.Rule.RuleID == "" && annotation.Rule.RuleText == "" && annotation.Rule.RuleName == "" {
-			return nil, fmt.Errorf("annotation line %d: rule_id, rule_name, or rule_text is required", line)
+			continue
 		}
 		out = append(out, &compiled{annotation: annotation})
 	}
@@ -127,7 +127,7 @@ func loadAnnotations(path string) ([]*compiled, error) {
 		return nil, err
 	}
 	if len(out) == 0 {
-		return nil, errors.New("annotations file contains no records")
+		return nil, errors.New("annotations file contains no completed records; fill rule_id, rule_name, or rule_text in at least one record")
 	}
 	return out, nil
 }
