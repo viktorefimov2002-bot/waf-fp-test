@@ -23,6 +23,8 @@ jobs:
         run: go test ./...
       - name: Build runner
         run: go build ./cmd/waf-fp
+      - name: Build normalization diagnostic
+        run: go build ./cmd/waf-normalization-test
       - name: Build generic corpus importer
         run: go build ./cmd/corpus-import
       - name: Build MGM corpus sync
