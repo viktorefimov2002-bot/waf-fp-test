@@ -16,9 +16,10 @@ request:
   payloads: examples/corpus.jsonl
   placements: [query, form, json, header, cookie, path]
 
+# Standard FP analysis always uses the original semantic payload.
+# HTTP serialization still happens naturally per placement: query/form URL encoding,
+# JSON escaping, safe cookie representation, and path serialization.
 payload_variants:
-  # raw preserves the previous behavior. Add transformations deliberately:
-  # url, double-url, base64, base64url, html, unicode, lower, upper, space-plus
   transforms: [raw]
 
 validation:
