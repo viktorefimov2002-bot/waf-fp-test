@@ -31,3 +31,16 @@ func TestUnsetCLIValuesDoNotOverrideConfig(t *testing.T) {
 	if err := applyCLIOverrides(&cfg, runner.Config{}, "", "", "", "", "", map[string]bool{}); err != nil { t.Fatal(err) }
 	if cfg.WAFBaseURL != "https://from-config.example" { t.Fatalf("config value was unexpectedly replaced: %#v", cfg) }
 }
+
+func TestRequireRawOnly(t *testing.T) {
+	for _, variants := range [][]string{nil, {}, {"raw"}} {
+		if err := requireRawOnly(variants); err != nil {
+			t.Fatalf("variants=%v: %v", variants, err)
+		}
+	}
+	for _, variants := range [][]string{{"raw", "url"}, {"base64"}} {
+		if err := requireRawOnly(variants); err == nil {
+			t.Fatalf("expected diagnostic-only rejection for %v", variants)
+		}
+	}
+}
