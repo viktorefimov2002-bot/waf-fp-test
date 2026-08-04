@@ -1,0 +1,4 @@
+{"name":"product-search","path":"/api/products/search","method":"POST","placement":"json","field":"query","headers":{"Accept":"application/json"},"control":true,"control_value":"running shoes"}
+{"name":"login-username","path":"/login","method":"POST","placement":"form","field":"username","control":false}
+{"name":"article-id","path":"/api/articles","method":"GET","placement":"query","field":"id","control":true,"control_value":"1"}
+{"name":"tracking-header","path":"/","method":"GET","placement":"header","field":"X-Tracking-Value","header":"X-Tracking-Value","control":false}
