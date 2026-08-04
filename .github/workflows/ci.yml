@@ -29,5 +29,9 @@ jobs:
         run: go build ./cmd/corpus-import
       - name: Build MGM corpus sync
         run: go build ./cmd/corpus-sync-mgm
+      - name: Build HTTPParams importer
+        run: go build ./cmd/corpus-import-httpparams
+      - name: Build CSIC importer
+        run: go build ./cmd/corpus-import-csic
       - name: Build result annotator
         run: go build ./cmd/results-annotate
