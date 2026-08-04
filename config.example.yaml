@@ -10,15 +10,18 @@ origin:
   sni: app.example.test
 
 request:
-  # generic (default), profiles, or both
+  # generic remains the default. Other values: profiles, both.
   mode: generic
+  profiles: examples/request-profiles.jsonl
   payloads: examples/corpus.jsonl
   placements: [query, form, json, header, cookie, path]
-  # Required only for request.mode=profiles or both.
-  profiles: examples/request-profiles.jsonl
+
+payload_variants:
+  # raw preserves the previous behavior. Add transformations deliberately:
+  # url, double-url, base64, base64url, html, unicode, lower, upper, space-plus
+  transforms: [raw]
 
 validation:
-  # Optional generic control request. Profiles may also enable it individually.
   control_request: false
   control_value: waf-fp-control
 
