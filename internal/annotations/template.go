@@ -27,6 +27,17 @@ type templateContext struct {
 	Method   string `json:"method,omitempty"`
 }
 
+type templateRule struct {
+	RuleID       string   `json:"rule_id"`
+	RuleName     string   `json:"rule_name"`
+	RuleText     string   `json:"rule_text"`
+	MatchedField string   `json:"matched_field"`
+	MatchedData  string   `json:"matched_data"`
+	Source       string   `json:"source"`
+	Notes        string   `json:"notes"`
+	Tags         []string `json:"tags"`
+}
+
 type templateHelp struct {
 	Required string `json:"required"`
 	Optional string `json:"optional"`
@@ -35,7 +46,7 @@ type templateHelp struct {
 type templateRecord struct {
 	Match   Match           `json:"match"`
 	Context templateContext `json:"context"`
-	Rule    RuleMetadata    `json:"rule"`
+	Rule    templateRule    `json:"rule"`
 	Help    templateHelp    `json:"_help"`
 }
 
@@ -95,7 +106,7 @@ func GenerateTemplate(opts TemplateOptions) (TemplateStats, error) {
 				Verdict:  verdict,
 				Method:   stringValue(result["method"]),
 			},
-			Rule: RuleMetadata{},
+			Rule: templateRule{Tags: []string{}},
 			Help: templateHelp{
 				Required: "fill at least one of rule.rule_id, rule.rule_name, or rule.rule_text",
 				Optional: "matched_field, matched_data, source, notes, tags; match and context are generated from results.jsonl",
