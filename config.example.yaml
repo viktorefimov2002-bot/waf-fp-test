@@ -10,8 +10,17 @@ origin:
   sni: app.example.test
 
 request:
+  # generic (default), profiles, or both
+  mode: generic
   payloads: examples/corpus.jsonl
   placements: [query, form, json, header, cookie, path]
+  # Required only for request.mode=profiles or both.
+  profiles: examples/request-profiles.jsonl
+
+validation:
+  # Optional generic control request. Profiles may also enable it individually.
+  control_request: false
+  control_value: waf-fp-control
 
 detection:
   block_statuses: [403, 406]
