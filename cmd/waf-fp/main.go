@@ -49,6 +49,7 @@ func main() {
 	visited := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { visited[f.Name] = true })
 	if err := applyCLIOverrides(&cfg, cli, placements, blockStatuses, blockSignatures, blockRegex, blockHeaders, visited); err != nil { exitConfig(err) }
+	if err := requireRawOnly(cfg.Variants); err != nil { exitConfig(err) }
 	if err := runner.Run(context.Background(), cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "run failed:", err)
 		os.Exit(1)
@@ -70,6 +71,11 @@ func main() {
 		fmt.Println("comparison written to", cfg.ComparisonFile)
 		if cfg.FailOnNewFP && comparison.NewFP > 0 { os.Exit(3) }
 	}
+}
+
+func requireRawOnly(variants []string) error {
+	if len(variants) == 0 || (len(variants) == 1 && variants[0] == "raw") { return nil }
+	return fmt.Errorf("standard FP runs accept only the raw semantic payload; use cmd/waf-normalization-test for encoding and normalization diagnostics")
 }
 
 func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, statuses, signatures, regexes, headers string, set map[string]bool) error {
