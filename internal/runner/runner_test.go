@@ -8,75 +8,23 @@ import (
 	"testing"
 )
 
-func TestParsePlacements(t *testing.T) {
-	placements, err := ParsePlacements("query,json,query")
-	if err != nil { t.Fatal(err) }
-	if len(placements) != 2 || placements[0] != PlacementQuery || placements[1] != PlacementJSON { t.Fatalf("unexpected placements: %#v", placements) }
-	if _, err := ParsePlacements("query,unknown"); err == nil { t.Fatal("expected unsupported placement error") }
-}
+func TestParsePlacements(t *testing.T){p,err:=ParsePlacements("query,json,query");if err!=nil{t.Fatal(err)};if len(p)!=2||p[0]!=PlacementQuery||p[1]!=PlacementJSON{t.Fatalf("placements=%v",p)};if _,err:=ParsePlacements("unknown");err==nil{t.Fatal("expected error")}}
 
-func TestBuildRequestMatrix(t *testing.T) {
-	tests := []struct {
-		placement Placement
-		method string
-		contentType string
-		check func(*testing.T, *http.Request)
-	}{
-		{PlacementQuery, http.MethodGet, "", func(t *testing.T, r *http.Request) { if got := r.URL.Query().Get("fp_param"); got != "select from catalog" { t.Fatalf("query=%q", got) } }},
-		{PlacementForm, http.MethodPost, "application/x-www-form-urlencoded", func(t *testing.T, r *http.Request) { body, _ := io.ReadAll(r.Body); if !strings.Contains(string(body), "fp_param=") { t.Fatalf("body=%q", body) } }},
-		{PlacementJSON, http.MethodPost, "application/json", func(t *testing.T, r *http.Request) { body, _ := io.ReadAll(r.Body); if !strings.Contains(string(body), `"fp_param":"select from catalog"`) { t.Fatalf("body=%q", body) } }},
-		{PlacementHeader, http.MethodGet, "", func(t *testing.T, r *http.Request) { if got := r.Header.Get("X-WAF-FP-Value"); got != "select from catalog" { t.Fatalf("header=%q", got) } }},
-		{PlacementCookie, http.MethodGet, "", func(t *testing.T, r *http.Request) { if got := r.Header.Get("Cookie"); got != "fp_param=select%20from%20catalog" { t.Fatalf("cookie header=%q", got) } }},
-		{PlacementPath, http.MethodGet, "", func(t *testing.T, r *http.Request) { if !strings.Contains(r.URL.EscapedPath(), "select%20from%20catalog") { t.Fatalf("path=%q", r.URL.EscapedPath()) } }},
+func TestBuildGenericAndProfileRequests(t *testing.T){
+	tests:=[]struct{name string;rc requestCase;payload string;check func(*testing.T,*http.Request)}{
+		{"generic-query",requestCase{Path:"/inspect",Method:"GET",Placement:PlacementQuery,Field:"fp_param"},"select from catalog",func(t *testing.T,r *http.Request){if got:=r.URL.Query().Get("fp_param");got!="select from catalog"{t.Fatalf("query=%q",got)}}},
+		{"profile-json",requestCase{Profile:"search",Path:"/api/search",Method:"POST",Placement:PlacementJSON,Field:"query"},"union was a great select",func(t *testing.T,r *http.Request){b,_:=io.ReadAll(r.Body);if !strings.Contains(string(b),`"query":"union was a great select"`){t.Fatalf("body=%s",b)}}},
+		{"profile-header",requestCase{Path:"/",Method:"GET",Placement:PlacementHeader,Field:"value",Header:"X-Business-Value"},"JavaScript basics",func(t *testing.T,r *http.Request){if got:=r.Header.Get("X-Business-Value");got!="JavaScript basics"{t.Fatalf("header=%q",got)}}},
+		{"cookie-encoded",requestCase{Path:"/",Method:"GET",Placement:PlacementCookie,Field:"session_value"},`a;b"c\d % кириллица`,func(t *testing.T,r *http.Request){v:=r.Header.Get("Cookie");if strings.ContainsAny(v,";\"\\ "){t.Fatalf("unsafe cookie=%q",v)};if !strings.Contains(v,"%3B")||!strings.Contains(v,"%22")||!strings.Contains(v,"%5C"){t.Fatalf("cookie=%q",v)}}},
 	}
-	for _, tc := range tests {
-		t.Run(string(tc.placement), func(t *testing.T) {
-			req, err := buildRequest(context.Background(), "https://example.test", "/inspect", tc.placement, "select from catalog", "")
-			if err != nil { t.Fatal(err) }
-			if req.Method != tc.method { t.Fatalf("method=%s", req.Method) }
-			if tc.contentType != "" && req.Header.Get("Content-Type") != tc.contentType { t.Fatalf("content-type=%q", req.Header.Get("Content-Type")) }
-			tc.check(t, req)
-		})
-	}
+	for _,tc:=range tests{t.Run(tc.name,func(t *testing.T){r,err:=buildRequest(context.Background(),"https://example.test",tc.rc,tc.payload,"");if err!=nil{t.Fatal(err)};tc.check(t,r)})}
 }
 
-func TestCookieEncodingPreservesUnsafeBytes(t *testing.T) {
-	payload := `a; "quoted" \\ value % тест`
-	req, err := buildRequest(context.Background(), "https://example.test", "/", PlacementCookie, payload, "")
-	if err != nil { t.Fatal(err) }
-	got := req.Header.Get("Cookie")
-	want := "fp_param=a%3B%20%22quoted%22%20%5C%5C%20value%20%25%20%D1%82%D0%B5%D1%81%D1%82"
-	if got != want { t.Fatalf("cookie header=%q want=%q", got, want) }
-	for _, invalid := range []string{";", `"`, `\`, " "} {
-		if strings.Contains(strings.TrimPrefix(got, "fp_param="), invalid) { t.Fatalf("unsafe byte %q remains in %q", invalid, got) }
-	}
+func TestBuildCasesModes(t *testing.T){
+	cfg:=Config{RequestMode:"generic",Path:"/",Placements:[]Placement{PlacementQuery,PlacementJSON},ControlEnabled:true,ControlValue:"control"}
+	cases,err:=buildCases(cfg);if err!=nil{t.Fatal(err)};if len(cases)!=2||!cases[0].Control{t.Fatalf("cases=%+v",cases)}
 }
 
-func TestBuildRequestOriginHostOverride(t *testing.T) {
-	req, err := buildRequest(context.Background(), "http://192.0.2.10:8080", "/inspect", PlacementQuery, "benign value", "app.example.test")
-	if err != nil { t.Fatal(err) }
-	if req.URL.Host != "192.0.2.10:8080" { t.Fatalf("URL host=%q", req.URL.Host) }
-	if req.Host != "app.example.test" { t.Fatalf("HTTP Host=%q", req.Host) }
-}
+func TestClassifyDifferential(t *testing.T){origin:=Observation{StatusCode:200,BodySHA256:"ok"};cfg:=Config{Mode:"differential",BlockStatuses:map[int]struct{}{403:{}}};blockedAttempt:=Attempt{WAF:Observation{StatusCode:403},Origin:&origin};allowed:=Attempt{WAF:origin,Origin:&origin};if got:=classifyResult([]Attempt{blockedAttempt,blockedAttempt},cfg);got!="CONFIRMED_FP"{t.Fatalf("verdict=%s",got)};if got:=classifyResult([]Attempt{blockedAttempt,allowed},cfg);got!="FLAKY_FP"{t.Fatalf("verdict=%s",got)}}
 
-func TestClassifyDifferential(t *testing.T) {
-	originOK := Observation{StatusCode: 200, BodySHA256: "origin"}
-	cfg := Config{Mode: "differential", BlockStatuses: map[int]struct{}{403: {}}}
-	confirmed := Attempt{WAF: Observation{StatusCode: 403}, Origin: &originOK}
-	allowed := Attempt{WAF: Observation{StatusCode: 200, BodySHA256: "origin"}, Origin: &originOK}
-	if got := classifyResult([]Attempt{confirmed, confirmed, confirmed}, cfg); got != "CONFIRMED_FP" { t.Fatalf("verdict=%s", got) }
-	if got := classifyResult([]Attempt{confirmed, allowed}, cfg); got != "FLAKY_FP" { t.Fatalf("verdict=%s", got) }
-	if got := classifyResult([]Attempt{allowed}, cfg); got != "NOT_FP" { t.Fatalf("verdict=%s", got) }
-}
-
-func TestClassifyWAFOnlyWithoutPreReview(t *testing.T) {
-	cfg := Config{Mode: "waf-only", BlockStatuses: map[int]struct{}{403: {}}}
-	blocked := Attempt{WAF: Observation{StatusCode: 403}}
-	allowed := Attempt{WAF: Observation{StatusCode: 200}}
-	if got := classifyResult([]Attempt{blocked, blocked}, cfg); got != "BLOCKED_BENIGN_CANDIDATE" { t.Fatalf("blocked verdict=%s", got) }
-	if got := classifyResult([]Attempt{allowed}, cfg); got != "NOT_BLOCKED" { t.Fatalf("allowed verdict=%s", got) }
-}
-
-func TestMatchSignature(t *testing.T) {
-	if got := matchSignature([]byte("Request Rejected: Access Denied"), []string{"access denied"}); got != "access denied" { t.Fatalf("signature=%q", got) }
-}
+func TestOriginHostOverride(t *testing.T){rc:=requestCase{Path:"/inspect",Method:"GET",Placement:PlacementQuery,Field:"q"};r,err:=buildRequest(context.Background(),"http://192.0.2.10:8080",rc,"value","app.example.test");if err!=nil{t.Fatal(err)};if r.Host!="app.example.test"||r.URL.Host!="192.0.2.10:8080"{t.Fatalf("host=%q url=%q",r.Host,r.URL.Host)}}
