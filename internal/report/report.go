@@ -101,6 +101,7 @@ func WriteComparison(baselinePath, currentPath, outputPath string) (Comparison, 
 				rows = append(rows, row("FIXED_FP", old))
 			}
 		}
+	}
 	sort.Strings(rows)
 	var body strings.Builder
 	fmt.Fprintf(&body, "# WAF FP baseline comparison\n\n- New confirmed FP: **%d**\n- Fixed confirmed FP: **%d**\n- Unchanged confirmed FP: **%d**\n- New response differences: **%d**\n\n", comparison.NewFP, comparison.FixedFP, comparison.UnchangedFP, comparison.NewResponseDifference)
