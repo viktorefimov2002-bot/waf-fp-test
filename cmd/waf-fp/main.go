@@ -33,7 +33,7 @@ func main() {
 	flag.DurationVar(&cli.Timeout, "timeout", defaults.Timeout, "request timeout")
 	flag.IntVar(&cli.Rechecks, "rechecks", defaults.Rechecks, "candidate rechecks")
 	flag.Int64Var(&cli.MaxBodyBytes, "max-body-bytes", defaults.MaxBodyBytes, "response bytes to fingerprint")
-	flag.StringVar(&placements, "placements", "query,form,json,header,cookie,path", "payload placements")
+	flag.StringVar(&placements, "placements", "query,form,json,header,cookie,path,xml", "payload placements")
 	flag.StringVar(&blockStatuses, "block-statuses", "403,406", "block statuses")
 	flag.StringVar(&blockSignatures, "block-body-contains", "", "optional body substrings")
 	flag.StringVar(&blockRegex, "block-body-regex", "", "optional body regex patterns")
@@ -44,12 +44,18 @@ func main() {
 	var err error
 	if configPath != "" {
 		cfg, err = appconfig.Load(configPath)
-		if err != nil { exitConfig(err) }
+		if err != nil {
+			exitConfig(err)
+		}
 	}
 	visited := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { visited[f.Name] = true })
-	if err := applyCLIOverrides(&cfg, cli, placements, blockStatuses, blockSignatures, blockRegex, blockHeaders, visited); err != nil { exitConfig(err) }
-	if err := requireRawOnly(cfg.Variants); err != nil { exitConfig(err) }
+	if err := applyCLIOverrides(&cfg, cli, placements, blockStatuses, blockSignatures, blockRegex, blockHeaders, visited); err != nil {
+		exitConfig(err)
+	}
+	if err := requireRawOnly(cfg.Variants); err != nil {
+		exitConfig(err)
+	}
 	if err := runner.Run(context.Background(), cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "run failed:", err)
 		os.Exit(1)
@@ -69,36 +75,92 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("comparison written to", cfg.ComparisonFile)
-		if cfg.FailOnNewFP && comparison.NewFP > 0 { os.Exit(3) }
+		if cfg.FailOnNewFP && comparison.NewFP > 0 {
+			os.Exit(3)
+		}
 	}
 }
 
 func requireRawOnly(variants []string) error {
-	if len(variants) == 0 || (len(variants) == 1 && variants[0] == "raw") { return nil }
+	if len(variants) == 0 || (len(variants) == 1 && variants[0] == "raw") {
+		return nil
+	}
 	return fmt.Errorf("standard FP runs accept only the raw semantic payload; use cmd/waf-normalization-test for encoding and normalization diagnostics")
 }
 
 func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, statuses, signatures, regexes, headers string, set map[string]bool) error {
-	if set["mode"] { cfg.Mode = cli.Mode }
-	if set["target"] { cfg.WAFBaseURL = cli.WAFBaseURL }
-	if set["origin"] { cfg.OriginBaseURL = cli.OriginBaseURL }
-	if set["origin-host"] { cfg.OriginHost = cli.OriginHost }
-	if set["origin-sni"] { cfg.OriginSNI = cli.OriginSNI }
-	if set["path"] { cfg.Path = cli.Path }
-	if set["payloads"] { cfg.PayloadFile = cli.PayloadFile }
-	if set["output"] { cfg.OutputFile = cli.OutputFile }
-	if set["summary"] { cfg.SummaryFile = cli.SummaryFile }
-	if set["baseline"] { cfg.BaselineFile = cli.BaselineFile }
-	if set["comparison"] { cfg.ComparisonFile = cli.ComparisonFile }
-	if set["fail-on-new-fp"] { cfg.FailOnNewFP = cli.FailOnNewFP }
-	if set["timeout"] { cfg.Timeout = cli.Timeout }
-	if set["rechecks"] { cfg.Rechecks = cli.Rechecks }
-	if set["max-body-bytes"] { cfg.MaxBodyBytes = cli.MaxBodyBytes }
-	if set["placements"] { parsed, err := runner.ParsePlacements(placements); if err != nil { return err }; cfg.Placements = parsed }
-	if set["block-statuses"] { parsed, err := parseStatuses(statuses); if err != nil { return err }; cfg.BlockStatuses = parsed }
-	if set["block-body-contains"] { cfg.BlockSignatures = parseStrings(signatures) }
-	if set["block-body-regex"] { cfg.BlockRegex = parseStrings(regexes) }
-	if set["block-header-contains"] { parsed, err := parseHeaderIndicators(parseStrings(headers)); if err != nil { return err }; cfg.BlockHeaders = parsed }
+	if set["mode"] {
+		cfg.Mode = cli.Mode
+	}
+	if set["target"] {
+		cfg.WAFBaseURL = cli.WAFBaseURL
+	}
+	if set["origin"] {
+		cfg.OriginBaseURL = cli.OriginBaseURL
+	}
+	if set["origin-host"] {
+		cfg.OriginHost = cli.OriginHost
+	}
+	if set["origin-sni"] {
+		cfg.OriginSNI = cli.OriginSNI
+	}
+	if set["path"] {
+		cfg.Path = cli.Path
+	}
+	if set["payloads"] {
+		cfg.PayloadFile = cli.PayloadFile
+	}
+	if set["output"] {
+		cfg.OutputFile = cli.OutputFile
+	}
+	if set["summary"] {
+		cfg.SummaryFile = cli.SummaryFile
+	}
+	if set["baseline"] {
+		cfg.BaselineFile = cli.BaselineFile
+	}
+	if set["comparison"] {
+		cfg.ComparisonFile = cli.ComparisonFile
+	}
+	if set["fail-on-new-fp"] {
+		cfg.FailOnNewFP = cli.FailOnNewFP
+	}
+	if set["timeout"] {
+		cfg.Timeout = cli.Timeout
+	}
+	if set["rechecks"] {
+		cfg.Rechecks = cli.Rechecks
+	}
+	if set["max-body-bytes"] {
+		cfg.MaxBodyBytes = cli.MaxBodyBytes
+	}
+	if set["placements"] {
+		parsed, err := runner.ParsePlacements(placements)
+		if err != nil {
+			return err
+		}
+		cfg.Placements = parsed
+	}
+	if set["block-statuses"] {
+		parsed, err := parseStatuses(statuses)
+		if err != nil {
+			return err
+		}
+		cfg.BlockStatuses = parsed
+	}
+	if set["block-body-contains"] {
+		cfg.BlockSignatures = parseStrings(signatures)
+	}
+	if set["block-body-regex"] {
+		cfg.BlockRegex = parseStrings(regexes)
+	}
+	if set["block-header-contains"] {
+		parsed, err := parseHeaderIndicators(parseStrings(headers))
+		if err != nil {
+			return err
+		}
+		cfg.BlockHeaders = parsed
+	}
 	return nil
 }
 
@@ -106,7 +168,9 @@ func parseStatuses(value string) (map[int]struct{}, error) {
 	result := map[int]struct{}{}
 	for _, item := range strings.Split(value, ",") {
 		status, err := strconv.Atoi(strings.TrimSpace(item))
-		if err != nil || status < 100 || status > 599 { return nil, fmt.Errorf("invalid HTTP status %q", item) }
+		if err != nil || status < 100 || status > 599 {
+			return nil, fmt.Errorf("invalid HTTP status %q", item)
+		}
 		result[status] = struct{}{}
 	}
 	return result, nil
@@ -115,7 +179,9 @@ func parseStatuses(value string) (map[int]struct{}, error) {
 func parseStrings(value string) []string {
 	var result []string
 	for _, item := range strings.Split(value, ",") {
-		if trimmed := strings.TrimSpace(item); trimmed != "" { result = append(result, trimmed) }
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			result = append(result, trimmed)
+		}
 	}
 	return result
 }
@@ -124,10 +190,15 @@ func parseHeaderIndicators(items []string) ([]runner.HeaderIndicator, error) {
 	var result []runner.HeaderIndicator
 	for _, item := range items {
 		key, value, ok := strings.Cut(item, "=")
-		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" { return nil, fmt.Errorf("invalid header indicator %q", item) }
+		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("invalid header indicator %q", item)
+		}
 		result = append(result, runner.HeaderIndicator{Header: strings.TrimSpace(key), Contains: strings.TrimSpace(value)})
 	}
 	return result, nil
 }
 
-func exitConfig(err error) { fmt.Fprintln(os.Stderr, "configuration error:", err); os.Exit(2) }
+func exitConfig(err error) {
+	fmt.Fprintln(os.Stderr, "configuration error:", err)
+	os.Exit(2)
+}
