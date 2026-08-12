@@ -14,11 +14,14 @@ request:
   mode: generic
   profiles: examples/request-profiles.jsonl
   payloads: examples/corpus.jsonl
-  placements: [query, form, json, header, cookie, path]
+  placements: [query, form, json, header, cookie, path, xml]
+
+# For the MGM corpus, generic mode automatically narrows these placements by
+# attack family to match the source templates (for example XXE -> XML body,
+# Log4Shell -> User-Agent). Explicit request profiles are never filtered.
 
 # Standard FP analysis always uses the original semantic payload.
-# HTTP serialization still happens naturally per placement: query/form URL encoding,
-# JSON escaping, safe cookie representation, and path serialization.
+# HTTP serialization still happens naturally per placement.
 payload_variants:
   transforms: [raw]
 
