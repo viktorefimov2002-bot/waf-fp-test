@@ -67,13 +67,13 @@ func Validate(profile Profile) error {
 	if method != http.MethodGet && method != http.MethodPost && method != http.MethodPut && method != http.MethodPatch && method != http.MethodDelete {
 		return fmt.Errorf("unsupported method %q", method)
 	}
-	switch strings.ToLower(strings.TrimSpace(profile.Placement)) {
-	case "query", "form", "json", "header", "cookie", "path":
+	placement := strings.ToLower(strings.TrimSpace(profile.Placement))
+	switch placement {
+	case "query", "form", "json", "header", "cookie", "path", "xml":
 	default:
 		return fmt.Errorf("unsupported placement %q", profile.Placement)
 	}
-	placement := strings.ToLower(strings.TrimSpace(profile.Placement))
-	if placement != "path" && strings.TrimSpace(profile.Field) == "" && !(placement == "header" && strings.TrimSpace(profile.Header) != "") {
+	if placement != "path" && placement != "xml" && strings.TrimSpace(profile.Field) == "" && !(placement == "header" && strings.TrimSpace(profile.Header) != "") {
 		return errors.New("field is required for this placement")
 	}
 	return nil
