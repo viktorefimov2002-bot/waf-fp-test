@@ -14,30 +14,33 @@ func TestApplyCLIOverrides(t *testing.T) {
 	cfg.Timeout = 15 * time.Second
 	cli := runner.Config{WAFBaseURL: "https://from-cli.example", Timeout: 3 * time.Second}
 
-	err := applyCLIOverrides(&cfg, cli, "query,json", "403", "denied", map[string]bool{
-		"target":                true,
-		"timeout":               true,
-		"placements":            true,
-		"block-body-contains":   true,
+	err := applyCLIOverrides(&cfg, cli, "query,json", "403", "denied", "", "", map[string]bool{
+		"target":              true,
+		"timeout":             true,
+		"placements":          true,
+		"block-body-contains": true,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.WAFBaseURL != "https://from-cli.example" || cfg.Timeout != 3*time.Second {
-		t.Fatalf("CLI overrides were not applied: %#v", cfg)
-	}
-	if len(cfg.Placements) != 2 || len(cfg.BlockSignatures) != 1 {
-		t.Fatalf("list overrides were not applied: %#v", cfg)
-	}
+	if err != nil { t.Fatal(err) }
+	if cfg.WAFBaseURL != "https://from-cli.example" || cfg.Timeout != 3*time.Second { t.Fatalf("CLI overrides were not applied: %#v", cfg) }
+	if len(cfg.Placements) != 2 || len(cfg.BlockSignatures) != 1 { t.Fatalf("list overrides were not applied: %#v", cfg) }
 }
 
 func TestUnsetCLIValuesDoNotOverrideConfig(t *testing.T) {
 	cfg := appconfig.Default()
 	cfg.WAFBaseURL = "https://from-config.example"
-	if err := applyCLIOverrides(&cfg, runner.Config{}, "", "", "", map[string]bool{}); err != nil {
-		t.Fatal(err)
+	if err := applyCLIOverrides(&cfg, runner.Config{}, "", "", "", "", "", map[string]bool{}); err != nil { t.Fatal(err) }
+	if cfg.WAFBaseURL != "https://from-config.example" { t.Fatalf("config value was unexpectedly replaced: %#v", cfg) }
+}
+
+func TestRequireRawOnly(t *testing.T) {
+	for _, variants := range [][]string{nil, {}, {"raw"}} {
+		if err := requireRawOnly(variants); err != nil {
+			t.Fatalf("variants=%v: %v", variants, err)
+		}
 	}
-	if cfg.WAFBaseURL != "https://from-config.example" {
-		t.Fatalf("config value was unexpectedly replaced: %#v", cfg)
+	for _, variants := range [][]string{{"raw", "url"}, {"base64"}} {
+		if err := requireRawOnly(variants); err == nil {
+			t.Fatalf("expected diagnostic-only rejection for %v", variants)
+		}
 	}
 }

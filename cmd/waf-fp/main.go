@@ -9,29 +9,35 @@ import (
 	"strings"
 
 	"github.com/viktorefimov2002-bot/waf-fp-test/internal/appconfig"
+	"github.com/viktorefimov2002-bot/waf-fp-test/internal/report"
 	"github.com/viktorefimov2002-bot/waf-fp-test/internal/runner"
 )
 
 func main() {
 	defaults := appconfig.Default()
 	var cli runner.Config
-	var configPath, blockStatuses, placements, blockSignatures string
-
+	var configPath, blockStatuses, placements, blockSignatures, blockRegex, blockHeaders string
 	flag.StringVar(&configPath, "config", "", "YAML configuration file")
-	flag.StringVar(&cli.Mode, "mode", defaults.Mode, "test mode: differential or waf-only")
+	flag.StringVar(&cli.Mode, "mode", defaults.Mode, "test mode")
 	flag.StringVar(&cli.WAFBaseURL, "target", "", "WAF-protected base URL")
-	flag.StringVar(&cli.OriginBaseURL, "origin", "", "direct origin base URL or IP")
-	flag.StringVar(&cli.OriginHost, "origin-host", "", "HTTP Host header for direct-origin requests")
-	flag.StringVar(&cli.OriginSNI, "origin-sni", "", "TLS SNI and certificate name for direct-origin HTTPS")
-	flag.StringVar(&cli.Path, "path", defaults.Path, "base request path")
-	flag.StringVar(&cli.PayloadFile, "payloads", defaults.PayloadFile, "benign payload file")
-	flag.StringVar(&cli.OutputFile, "output", defaults.OutputFile, "JSONL output file")
-	flag.DurationVar(&cli.Timeout, "timeout", defaults.Timeout, "per-request timeout")
-	flag.IntVar(&cli.Rechecks, "rechecks", defaults.Rechecks, "additional checks for an FP candidate")
-	flag.Int64Var(&cli.MaxBodyBytes, "max-body-bytes", defaults.MaxBodyBytes, "maximum response body bytes used for fingerprinting")
-	flag.StringVar(&placements, "placements", "query,form,json,header,cookie,path", "comma-separated payload placements")
-	flag.StringVar(&blockStatuses, "block-statuses", "403,406", "comma-separated WAF block statuses")
-	flag.StringVar(&blockSignatures, "block-body-contains", "", "comma-separated case-insensitive block-page substrings")
+	flag.StringVar(&cli.OriginBaseURL, "origin", "", "direct origin URL")
+	flag.StringVar(&cli.OriginHost, "origin-host", "", "origin HTTP Host")
+	flag.StringVar(&cli.OriginSNI, "origin-sni", "", "origin TLS SNI")
+	flag.StringVar(&cli.Path, "path", defaults.Path, "request path")
+	flag.StringVar(&cli.PayloadFile, "payloads", defaults.PayloadFile, "payload file or normalized JSONL corpus")
+	flag.StringVar(&cli.OutputFile, "output", defaults.OutputFile, "JSONL output")
+	flag.StringVar(&cli.SummaryFile, "summary", defaults.SummaryFile, "Markdown summary")
+	flag.StringVar(&cli.BaselineFile, "baseline", "", "baseline JSONL")
+	flag.StringVar(&cli.ComparisonFile, "comparison", defaults.ComparisonFile, "comparison report")
+	flag.BoolVar(&cli.FailOnNewFP, "fail-on-new-fp", false, "exit 3 when comparison finds new confirmed FP")
+	flag.DurationVar(&cli.Timeout, "timeout", defaults.Timeout, "request timeout")
+	flag.IntVar(&cli.Rechecks, "rechecks", defaults.Rechecks, "candidate rechecks")
+	flag.Int64Var(&cli.MaxBodyBytes, "max-body-bytes", defaults.MaxBodyBytes, "response bytes to fingerprint")
+	flag.StringVar(&placements, "placements", "query,form,json,header,cookie,path,xml", "payload placements")
+	flag.StringVar(&blockStatuses, "block-statuses", "403,406", "block statuses")
+	flag.StringVar(&blockSignatures, "block-body-contains", "", "optional body substrings")
+	flag.StringVar(&blockRegex, "block-body-regex", "", "optional body regex patterns")
+	flag.StringVar(&blockHeaders, "block-header-contains", "", "optional Header=substring indicators")
 	flag.Parse()
 
 	cfg := defaults
@@ -42,21 +48,47 @@ func main() {
 			exitConfig(err)
 		}
 	}
-
 	visited := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { visited[f.Name] = true })
-	if err := applyCLIOverrides(&cfg, cli, placements, blockStatuses, blockSignatures, visited); err != nil {
+	if err := applyCLIOverrides(&cfg, cli, placements, blockStatuses, blockSignatures, blockRegex, blockHeaders, visited); err != nil {
 		exitConfig(err)
 	}
-
+	if err := requireRawOnly(cfg.Variants); err != nil {
+		exitConfig(err)
+	}
 	if err := runner.Run(context.Background(), cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "run failed:", err)
 		os.Exit(1)
 	}
 	fmt.Println("results written to", cfg.OutputFile)
+	if cfg.SummaryFile != "" {
+		if _, err := report.WriteSummary(cfg.OutputFile, cfg.SummaryFile); err != nil {
+			fmt.Fprintln(os.Stderr, "summary failed:", err)
+			os.Exit(1)
+		}
+		fmt.Println("summary written to", cfg.SummaryFile)
+	}
+	if cfg.BaselineFile != "" {
+		comparison, err := report.WriteComparison(cfg.BaselineFile, cfg.OutputFile, cfg.ComparisonFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "comparison failed:", err)
+			os.Exit(1)
+		}
+		fmt.Println("comparison written to", cfg.ComparisonFile)
+		if cfg.FailOnNewFP && comparison.NewFP > 0 {
+			os.Exit(3)
+		}
+	}
 }
 
-func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, blockStatuses, blockSignatures string, set map[string]bool) error {
+func requireRawOnly(variants []string) error {
+	if len(variants) == 0 || (len(variants) == 1 && variants[0] == "raw") {
+		return nil
+	}
+	return fmt.Errorf("standard FP runs accept only the raw semantic payload; use cmd/waf-normalization-test for encoding and normalization diagnostics")
+}
+
+func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, statuses, signatures, regexes, headers string, set map[string]bool) error {
 	if set["mode"] {
 		cfg.Mode = cli.Mode
 	}
@@ -81,6 +113,18 @@ func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, blockS
 	if set["output"] {
 		cfg.OutputFile = cli.OutputFile
 	}
+	if set["summary"] {
+		cfg.SummaryFile = cli.SummaryFile
+	}
+	if set["baseline"] {
+		cfg.BaselineFile = cli.BaselineFile
+	}
+	if set["comparison"] {
+		cfg.ComparisonFile = cli.ComparisonFile
+	}
+	if set["fail-on-new-fp"] {
+		cfg.FailOnNewFP = cli.FailOnNewFP
+	}
 	if set["timeout"] {
 		cfg.Timeout = cli.Timeout
 	}
@@ -98,20 +142,30 @@ func applyCLIOverrides(cfg *runner.Config, cli runner.Config, placements, blockS
 		cfg.Placements = parsed
 	}
 	if set["block-statuses"] {
-		parsed, err := parseStatuses(blockStatuses)
+		parsed, err := parseStatuses(statuses)
 		if err != nil {
 			return err
 		}
 		cfg.BlockStatuses = parsed
 	}
 	if set["block-body-contains"] {
-		cfg.BlockSignatures = parseStrings(blockSignatures)
+		cfg.BlockSignatures = parseStrings(signatures)
+	}
+	if set["block-body-regex"] {
+		cfg.BlockRegex = parseStrings(regexes)
+	}
+	if set["block-header-contains"] {
+		parsed, err := parseHeaderIndicators(parseStrings(headers))
+		if err != nil {
+			return err
+		}
+		cfg.BlockHeaders = parsed
 	}
 	return nil
 }
 
 func parseStatuses(value string) (map[int]struct{}, error) {
-	result := make(map[int]struct{})
+	result := map[int]struct{}{}
 	for _, item := range strings.Split(value, ",") {
 		status, err := strconv.Atoi(strings.TrimSpace(item))
 		if err != nil || status < 100 || status > 599 {
@@ -130,6 +184,18 @@ func parseStrings(value string) []string {
 		}
 	}
 	return result
+}
+
+func parseHeaderIndicators(items []string) ([]runner.HeaderIndicator, error) {
+	var result []runner.HeaderIndicator
+	for _, item := range items {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("invalid header indicator %q", item)
+		}
+		result = append(result, runner.HeaderIndicator{Header: strings.TrimSpace(key), Contains: strings.TrimSpace(value)})
+	}
+	return result, nil
 }
 
 func exitConfig(err error) {

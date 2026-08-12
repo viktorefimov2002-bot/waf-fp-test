@@ -1,0 +1,43 @@
+mode: differential
+
+target:
+  url: https://app.example.test
+  path: /api/search
+
+origin:
+  url: https://192.0.2.10:443
+  host: app.example.test
+  sni: app.example.test
+
+request:
+  # Use a narrow request profile when possible. Generic is allowed, but this command
+  # is diagnostic and should normally be run only for selected confirmed FP payloads.
+  mode: generic
+  payloads: examples/corpus.jsonl
+  placements: [query]
+
+payload_variants:
+  transforms: [raw, url, double-url, html, unicode]
+
+validation:
+  control_request: false
+  control_value: waf-fp-control
+
+detection:
+  block_statuses: [403, 406]
+  block_body_contains: []
+  block_body_regex: []
+  block_header_contains: []
+
+execution:
+  timeout: 10s
+  rechecks: 0
+  max_body_bytes: 1048576
+
+output:
+  file: normalization-results.jsonl
+  summary: normalization-summary.md
+  # Baseline comparison is intentionally disabled for diagnostic variants.
+  baseline: ""
+  comparison: ""
+  fail_on_new_fp: false

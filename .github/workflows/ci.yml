@@ -21,5 +21,17 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
-      - name: Build
+      - name: Build runner
         run: go build ./cmd/waf-fp
+      - name: Build normalization diagnostic
+        run: go build ./cmd/waf-normalization-test
+      - name: Build generic corpus importer
+        run: go build ./cmd/corpus-import
+      - name: Build MGM corpus sync
+        run: go build ./cmd/corpus-sync-mgm
+      - name: Build HTTPParams importer
+        run: go build ./cmd/corpus-import-httpparams
+      - name: Build CSIC importer
+        run: go build ./cmd/corpus-import-csic
+      - name: Build result annotator
+        run: go build ./cmd/results-annotate

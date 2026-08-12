@@ -10,12 +10,31 @@ origin:
   sni: app.example.test
 
 request:
-  payloads: examples/payloads.txt
-  placements: [query, form, json, header, cookie, path]
+  # generic remains the default. Other values: profiles, both.
+  mode: generic
+  profiles: examples/request-profiles.jsonl
+  payloads: examples/corpus.jsonl
+  placements: [query, form, json, header, cookie, path, xml]
+
+# For the MGM corpus, generic mode automatically narrows these placements by
+# attack family to match the source templates (for example XXE -> XML body,
+# Log4Shell -> User-Agent). Explicit request profiles are never filtered.
+
+# Standard FP analysis always uses the original semantic payload.
+# HTTP serialization still happens naturally per placement.
+payload_variants:
+  transforms: [raw]
+
+validation:
+  control_request: false
+  control_value: waf-fp-control
 
 detection:
   block_statuses: [403, 406]
-  block_body_contains: ["access denied", "request rejected"]
+  # Optional installation-specific indicators. Leave empty unless verified.
+  block_body_contains: []
+  block_body_regex: []
+  block_header_contains: []
 
 execution:
   timeout: 10s
@@ -24,3 +43,7 @@ execution:
 
 output:
   file: results.jsonl
+  summary: summary.md
+  baseline: ""
+  comparison: comparison.md
+  fail_on_new_fp: false
